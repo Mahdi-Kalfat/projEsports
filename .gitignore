@@ -1,0 +1,9 @@
+# Local AI-tool/IDE session state — not project source
+.claude/
+.agents/
+.windsurf/
+.cursor/
+
+# OS cruft
+.DS_Store
+Thumbs.db

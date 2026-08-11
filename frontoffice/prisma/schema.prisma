@@ -1,0 +1,722 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MODERATOR
+  USER
+}
+
+enum SubRole {
+  TRUSTED
+  COMMENTOR
+}
+
+enum TournamentStatus {
+  DRAFT
+  REGISTRATION
+  CHECK_IN
+  LIVE
+  COMPLETED
+  ARCHIVED
+}
+
+enum EntryType {
+  FREE
+  POINTS
+  MONEY
+}
+
+enum ParticipationType {
+  SOLO
+  TEAM
+}
+
+enum EventStatus {
+  DRAFT
+  SCHEDULED
+  LIVE
+  COMPLETED
+  ARCHIVED
+  CANCELLED
+}
+
+enum EventType {
+  COMMUNITY
+  NEWS
+  MAINTENANCE
+  GIVEAWAY
+  ANNOUNCEMENT
+  PARTNERSHIP
+}
+
+enum ShopItemStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum ShopItemCategory {
+  AVATAR
+  BADGE
+  BOOST
+  VOUCHER
+  MERCH
+  OTHER
+}
+
+enum BattlePassStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum MarketplaceStatus {
+  PENDING
+  APPROVED
+  DECLINED
+  ARCHIVED
+  SOLD
+}
+
+enum MarketplaceCategory {
+  ACCOUNT
+  IN_GAME_ITEM
+  BOOST_SERVICE
+  GEAR
+  OTHER
+}
+
+enum FriendRequestStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+
+enum PostMediaType {
+  NONE
+  IMAGE
+  VIDEO
+}
+
+// Curated palette, not arbitrary CSS — see src/lib/profile-theme.ts for the hex
+// values. Recolors a viewer's read of *your* profile (avatar ring, rank title,
+// level badge) without touching the site-wide --primary/--accent brand tokens
+// used everywhere else (nav, buttons), and with no injection surface.
+enum ProfileTheme {
+  CRIMSON
+  CYAN
+  VIOLET
+  EMERALD
+  AMBER
+}
+
+enum ClanVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+enum ClanMemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum ClanJoinRequestStatus {
+  PENDING
+  APPROVED
+  DECLINED
+}
+
+model User {
+  id                 String       @id @default(auto()) @map("_id") @db.ObjectId
+  username           String       @unique
+  email              String       @unique
+  fullName           String?
+  phone              String?
+  passwordHash       String
+  role               Role         @default(USER)
+  subRoles           SubRole[]    @default([])
+  // Independent flags, not a status enum: a banned user can't log in at all;
+  // a blocked user can log in and use everything except join tournaments;
+  // market/shop-blocked can log in and play but not use that one module.
+  // Each *Until is the expiry — the restriction is only in effect while
+  // the flag is true AND *Until is in the future (see lib/restrictions.ts).
+  banned             Boolean      @default(false)
+  bannedUntil        DateTime?
+  blocked            Boolean      @default(false)
+  blockedUntil       DateTime?
+  marketBlocked      Boolean      @default(false)
+  marketBlockedUntil DateTime?
+  shopBlocked        Boolean      @default(false)
+  shopBlockedUntil   DateTime?
+  points             Int          @default(0)
+  level              Int          @default(1)
+  // XP toward the *next* level — admin-managed from the back office (see
+  // LevelXpRule below); this app only reads it for display.
+  xp                 Int          @default(0)
+  avatarUrl          String?
+  // Freeform "about me" text shown on the public profile — distinct from the
+  // admin-only Note model, which is staff commentary the user never sees.
+  bio                String?
+  // Shareable code (e.g. "AB3X-9KPQ") so a player can be friended without the
+  // other person already knowing their username — generated at signup by
+  // src/lib/friend-code.ts. Optional at the schema level (not every legacy/seeded
+  // row has one yet) rather than required, so a missing code never breaks reads.
+  friendCode         String?      @unique
+  // Profile personalization — banner replaces the default gradient when set;
+  // profileTheme re-tints the accent bits of the profile (see ProfileTheme above).
+  bannerImageUrl     String?
+  profileTheme       ProfileTheme @default(CRIMSON)
+  // Whether other players can see this account's inventory contents (the
+  // profile sidebar widget and /inventory/[username]) — the owner can always
+  // see their own regardless of this flag. Defaults to public like the rest
+  // of the profile.
+  inventoryPublic    Boolean      @default(true)
+  lastLoginAt        DateTime?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  participations         TournamentParticipant[]
+  eventAttendances       EventAttendee[]
+  marketplaceListings    MarketplaceListing[]
+  marketplacePurchases   MarketplaceListing[]    @relation("MarketplacePurchases")
+  badges                 UserBadge[]
+  inventoryItems         UserInventoryItem[]
+  battlePassUnlocks      UserBattlePassUnlock[]
+  sentFriendRequests     FriendRequest[]         @relation("SentFriendRequests")
+  receivedFriendRequests FriendRequest[]         @relation("ReceivedFriendRequests")
+  // Virtual back-relations — no physical index/column on `users`, so unlike
+  // friendCode's @unique, nothing here needs mirroring into backoffice's schema.
+  conversationsAsUserA   Conversation[]          @relation("ConversationsAsUserA")
+  conversationsAsUserB   Conversation[]          @relation("ConversationsAsUserB")
+  sentMessages           Message[]               @relation("SentMessages")
+  receivedMessages       Message[]               @relation("ReceivedMessages")
+  posts                  Post[]                  @relation("AuthoredPosts")
+  postLikes              PostLike[]              @relation("PostLikes")
+  postComments           PostComment[]           @relation("PostComments")
+  // Wall/guestbook comments — receivedProfileComments is what shows at the
+  // bottom of *this* user's own profile page; authoredProfileComments is
+  // everything they've left on other people's profiles.
+  receivedProfileComments ProfileComment[]        @relation("ProfileWall")
+  authoredProfileComments ProfileComment[]        @relation("AuthoredProfileComments")
+  // Both nullable/singular, not lists: a user owns at most one clan (Clan.ownerId
+  // is @unique) and belongs to at most one clan total, whether as owner or member
+  // (ClanMembership.userId is @unique) — see the Clan model comment.
+  ownedClan              Clan?                   @relation("OwnedClan")
+  clanMembership         ClanMembership?
+  clanJoinRequests       ClanJoinRequest[]
+
+  @@map("users")
+}
+
+// A friend connection is a single row: PENDING when sent, then either ACCEPTED
+// (both directions now count as friends — see src/lib/friends.ts, which queries
+// senderId=me OR receiverId=me with status=ACCEPTED rather than maintaining a
+// separate symmetric Friendship table) or DECLINED. The unique pair lets the
+// sender re-send later (upsert back to PENDING) without duplicate rows.
+model FriendRequest {
+  id          String              @id @default(auto()) @map("_id") @db.ObjectId
+  senderId    String              @db.ObjectId
+  sender      User                @relation("SentFriendRequests", fields: [senderId], references: [id])
+  receiverId  String              @db.ObjectId
+  receiver    User                @relation("ReceivedFriendRequests", fields: [receiverId], references: [id])
+  status      FriendRequestStatus @default(PENDING)
+  createdAt   DateTime            @default(now())
+  respondedAt DateTime?
+
+  @@unique([senderId, receiverId])
+  @@index([receiverId, status])
+  @@index([senderId, status])
+  @@map("friend_requests")
+}
+
+// A single 1:1 conversation between two friends — one row per unordered pair.
+// userAId is always the lexicographically-smaller of the two user ids (sorted
+// in lib/messages.ts before every read/write), so @@unique([userAId, userBId])
+// enforces exactly one Conversation per pair regardless of who opens the
+// thread first — unlike FriendRequest, direction doesn't matter for a DM
+// thread, so there's no sender/receiver split here. lastMessageAt is
+// denormalized from the newest Message so the inbox can sort "by last
+// activity" with a plain indexed query instead of a Mongo aggregation
+// pipeline — there's no cheap cross-collection GROUP BY here.
+model Conversation {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  userAId       String   @db.ObjectId
+  userA         User     @relation("ConversationsAsUserA", fields: [userAId], references: [id])
+  userBId       String   @db.ObjectId
+  userB         User     @relation("ConversationsAsUserB", fields: [userBId], references: [id])
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  messages Message[]
+
+  @@unique([userAId, userBId])
+  @@index([userAId, lastMessageAt])
+  @@index([userBId, lastMessageAt])
+  @@map("conversations")
+}
+
+// A single DM. receiverId is denormalized (derivable from conversation.userA/
+// userB minus senderId) purely so unread-count queries — countUnreadMessages
+// for the navbar badge, and markConversationRead — are a flat indexed
+// `where: { receiverId, readAt: null }` scan instead of a join through
+// Conversation, the same denormalize-for-Mongo-query-simplicity tradeoff
+// AuditLog makes with actorId/targetUserId. readAt (not a Boolean) records
+// *when* a message was seen — there's no separate "unread" toggle to flip
+// back off, so one nullable timestamp is enough.
+model Message {
+  id             String       @id @default(auto()) @map("_id") @db.ObjectId
+  conversationId String       @db.ObjectId
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  senderId       String       @db.ObjectId
+  sender         User         @relation("SentMessages", fields: [senderId], references: [id])
+  receiverId     String       @db.ObjectId
+  receiver       User         @relation("ReceivedMessages", fields: [receiverId], references: [id])
+  body           String
+  readAt         DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([receiverId, readAt])
+  @@map("messages")
+}
+
+// A clan/team. Creating one requires level 20+ (checked in the action, not the
+// schema); a user can only ever own or belong to one clan at a time — enforced
+// by ownerId being @unique here and userId being @unique on ClanMembership,
+// not by application logic alone. Ownership can transfer to another member
+// (updates both this ownerId and the two members' ClanMembership.role), or the
+// owner can disband the clan outright.
+model Clan {
+  id          String         @id @default(auto()) @map("_id") @db.ObjectId
+  name        String         @unique
+  tag         String         @unique
+  description String?
+  logoUrl     String?
+  bannerUrl   String?
+  visibility  ClanVisibility @default(PUBLIC)
+  // Per-clan floor, independent of and possibly stricter than the platform-wide
+  // level-20-to-create rule — an owner can gate joining below or above that.
+  minLevel    Int            @default(1)
+  maxMembers  Int            @default(20)
+  ownerId     String         @unique @db.ObjectId
+  owner       User           @relation("OwnedClan", fields: [ownerId], references: [id])
+  createdAt   DateTime       @default(now())
+
+  members      ClanMembership[]
+  joinRequests ClanJoinRequest[]
+
+  @@map("clans")
+}
+
+model ClanMembership {
+  id       String         @id @default(auto()) @map("_id") @db.ObjectId
+  clanId   String         @db.ObjectId
+  clan     Clan           @relation(fields: [clanId], references: [id])
+  userId   String         @unique @db.ObjectId
+  user     User           @relation(fields: [userId], references: [id])
+  role     ClanMemberRole @default(MEMBER)
+  joinedAt DateTime       @default(now())
+
+  @@index([clanId, role])
+  @@map("clan_memberships")
+}
+
+// Only used for PRIVATE clans — a PUBLIC clan is joined directly via
+// ClanMembership with no request step. Rows are kept (not deleted) after a
+// decision so a requester can see the outcome of their own request.
+model ClanJoinRequest {
+  id          String                @id @default(auto()) @map("_id") @db.ObjectId
+  clanId      String                @db.ObjectId
+  clan        Clan                  @relation(fields: [clanId], references: [id])
+  userId      String                @db.ObjectId
+  user        User                  @relation(fields: [userId], references: [id])
+  status      ClanJoinRequestStatus @default(PENDING)
+  createdAt   DateTime              @default(now())
+  respondedAt DateTime?
+
+  @@unique([clanId, userId])
+  @@index([clanId, status])
+  @@index([userId, status])
+  @@map("clan_join_requests")
+}
+
+// A profile-wall post — visible to any visitor (see the front office's public
+// profile page), authored only by the profile's own owner. Likes/comments come
+// from any user who can view it, not just the owner or their friends.
+model Post {
+  id        String        @id @default(auto()) @map("_id") @db.ObjectId
+  authorId  String        @db.ObjectId
+  author    User          @relation("AuthoredPosts", fields: [authorId], references: [id])
+  body      String?
+  mediaType PostMediaType @default(NONE)
+  mediaUrl  String?
+  views     Int           @default(0)
+  createdAt DateTime      @default(now())
+
+  // A repost is its own Post row (authorId = the reposter, body/media always
+  // empty) that points at the original via repostOfId — this is what makes it
+  // show up in the reposter's own feed for free, reusing the normal post query.
+  // Reposting a repost is flattened to point at the underlying original
+  // (see toggleRepost in posts-actions.ts), so this never chains more than
+  // one level deep. onDelete: NoAction (required for self-relations — Mongo
+  // has no native FK cascade) means deletePost must explicitly delete
+  // dependent reposts itself before deleting the original, which it does —
+  // matching how retweets vanish when the source tweet is deleted.
+  repostOfId String? @db.ObjectId
+  repostOf   Post?   @relation("Reposts", fields: [repostOfId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reposts    Post[]  @relation("Reposts")
+
+  likes    PostLike[]
+  comments PostComment[]
+
+  @@index([authorId, createdAt])
+  @@index([repostOfId])
+  @@map("posts")
+}
+
+model PostLike {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  postId    String   @db.ObjectId
+  post      Post     @relation(fields: [postId], references: [id])
+  userId    String   @db.ObjectId
+  user      User     @relation("PostLikes", fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([postId, userId])
+  @@index([postId])
+  @@map("post_likes")
+}
+
+model PostComment {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  postId    String   @db.ObjectId
+  post      Post     @relation(fields: [postId], references: [id])
+  authorId  String   @db.ObjectId
+  author    User     @relation("PostComments", fields: [authorId], references: [id])
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([postId, createdAt])
+  @@map("post_comments")
+}
+
+// A wall/guestbook comment left directly on a profile page (not tied to any
+// specific Post) — any logged-in user can leave one on anyone's profile,
+// shown at the bottom of the page. Distinct from PostComment, which is
+// scoped to a single post's own comment thread.
+model ProfileComment {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  profileId String   @db.ObjectId
+  profile   User     @relation("ProfileWall", fields: [profileId], references: [id])
+  authorId  String   @db.ObjectId
+  author    User     @relation("AuthoredProfileComments", fields: [authorId], references: [id])
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([profileId, createdAt])
+  @@map("profile_comments")
+}
+
+// Mirror of backoffice's LevelXpRule — read-only here, managed from the back
+// office's /levels page. See lib/level-xp.ts for tierForLevel/getRequiredXp.
+model LevelXpRule {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  tier       Int      @unique
+  xpPerLevel Int
+  updatedAt  DateTime @updatedAt
+
+  @@map("level_xp_rules")
+}
+
+model Game {
+  id     String  @id @default(auto()) @map("_id") @db.ObjectId
+  slug   String  @unique
+  name   String
+  icon   String?
+  active Boolean @default(true)
+
+  tournaments         Tournament[]
+  events              Event[]
+  shopItems           ShopItem[]
+  marketplaceListings MarketplaceListing[]
+
+  @@map("games")
+}
+
+model Tournament {
+  id                 String            @id @default(auto()) @map("_id") @db.ObjectId
+  title              String
+  description        String?
+  additionalInfo     String?
+  gameId             String            @db.ObjectId
+  game               Game              @relation(fields: [gameId], references: [id])
+  status             TournamentStatus  @default(DRAFT)
+  entryType          EntryType         @default(FREE)
+  entryCost          Int               @default(0)
+  prizePool          Int               @default(0)
+  participationType  ParticipationType @default(SOLO)
+  backgroundImageUrl String?
+  logoImageUrl       String?
+  startAt            DateTime
+  createdAt          DateTime          @default(now())
+
+  participants TournamentParticipant[]
+
+  @@map("tournaments")
+}
+
+// Recorded once the front-end registration flow (built separately) signs a
+// user up for a tournament — teamName is only meaningful when the tournament's
+// participationType is TEAM.
+model TournamentParticipant {
+  id           String     @id @default(auto()) @map("_id") @db.ObjectId
+  tournamentId String     @db.ObjectId
+  tournament   Tournament @relation(fields: [tournamentId], references: [id])
+  userId       String     @db.ObjectId
+  user         User       @relation(fields: [userId], references: [id])
+  teamName     String?
+  joinedAt     DateTime   @default(now())
+
+  @@unique([tournamentId, userId])
+  @@index([tournamentId])
+  @@map("tournament_participants")
+}
+
+// Community events / news / maintenance windows shown alongside tournaments —
+// non-competitive, so no prize pool or entry cost like Tournament has.
+model Event {
+  id                 String      @id @default(auto()) @map("_id") @db.ObjectId
+  title              String
+  description        String?
+  additionalInfo     String?
+  type               EventType   @default(COMMUNITY)
+  status             EventStatus @default(DRAFT)
+  gameId             String?     @db.ObjectId
+  game               Game?       @relation(fields: [gameId], references: [id])
+  location           String?
+  capacity           Int?
+  backgroundImageUrl String?
+  logoImageUrl       String?
+  startAt            DateTime
+  endAt              DateTime?
+  createdAt          DateTime    @default(now())
+
+  attendees EventAttendee[]
+
+  @@map("events")
+}
+
+// Recorded once the front-end RSVP flow (built separately) signs a user up
+// for an event.
+model EventAttendee {
+  id       String   @id @default(auto()) @map("_id") @db.ObjectId
+  eventId  String   @db.ObjectId
+  event    Event    @relation(fields: [eventId], references: [id])
+  userId   String   @db.ObjectId
+  user     User     @relation(fields: [userId], references: [id])
+  joinedAt DateTime @default(now())
+
+  @@unique([eventId, userId])
+  @@index([eventId])
+  @@map("event_attendees")
+}
+
+// Admin-curated storefront items — priced in points or money (reuses Tournament's
+// EntryType). Ownership is tracked via UserInventoryItem below (added ahead of any
+// acquisition flow — there's still no purchase/grant path yet, so every user's
+// inventory starts, and stays, empty until one exists). Purchasing itself remains
+// out of scope: the front-office buy flow doesn't exist yet.
+model ShopItem {
+  id          String           @id @default(auto()) @map("_id") @db.ObjectId
+  title       String
+  description String?
+  category    ShopItemCategory @default(OTHER)
+  status      ShopItemStatus   @default(DRAFT)
+  priceType   EntryType        @default(POINTS)
+  price       Int              @default(0)
+  stock       Int?
+  gameId      String?          @db.ObjectId
+  game        Game?            @relation(fields: [gameId], references: [id])
+  imageUrl    String?
+  createdAt   DateTime         @default(now())
+
+  inventoryEntries UserInventoryItem[]
+
+  @@map("shop_items")
+}
+
+// Admin-configured Battle Pass season — a points-gated reward ladder shown
+// read-only in the front office (Unlock Premium is a disabled "Coming soon"
+// button, same precedent as ShopItemCard: no purchase/point-deduction flow
+// exists yet, only display). Multiple seasons can exist; the front office
+// shows whichever has status ACTIVE (ties broken by startAt desc). startAt/
+// endAt are both required and are informational/display fields only, not
+// the gating mechanism — unlike Event.endAt, a season always has a defined end.
+model BattlePass {
+  id                String           @id @default(auto()) @map("_id") @db.ObjectId
+  title             String
+  description       String?
+  status            BattlePassStatus @default(DRAFT)
+  premiumPointsCost Int              @default(0)
+  startAt           DateTime
+  endAt             DateTime
+  createdAt         DateTime         @default(now())
+
+  tiers   BattlePassTier[]
+  unlocks UserBattlePassUnlock[]
+
+  @@map("battle_passes")
+}
+
+// One rung of a season's reward ladder. Reward content is freeform text
+// (not linked to real ShopItem rows) — matches what the admin types, e.g.
+// "500 Points" or "Legendary Avatar Frame". Tier numbers aren't a stored
+// count; they're just how many BattlePassTier rows exist for a season,
+// added one at a time (mirrors LevelXpRule's per-tier-row pattern).
+model BattlePassTier {
+  id            String     @id @default(auto()) @map("_id") @db.ObjectId
+  battlePassId  String     @db.ObjectId
+  battlePass    BattlePass @relation(fields: [battlePassId], references: [id])
+  tier          Int
+  freeReward    String
+  premiumReward String
+
+  @@unique([battlePassId, tier])
+  @@index([battlePassId])
+  @@map("battle_pass_tiers")
+}
+
+// Records that a user has unlocked a BattlePass's premium track. Kept
+// separate from BattlePass/BattlePassTier (admin-configured content) since
+// this is user-owned purchase data — frontoffice-only, mirroring
+// UserInventoryItem's treatment, since backoffice has no admin UI that
+// reads or writes it. Points spent here vanish rather than moving
+// peer-to-peer (unlike buyListing's marketplace purchases) — there's no
+// seller for a battle pass unlock.
+model UserBattlePassUnlock {
+  id           String     @id @default(auto()) @map("_id") @db.ObjectId
+  userId       String     @db.ObjectId
+  user         User       @relation(fields: [userId], references: [id])
+  battlePassId String     @db.ObjectId
+  battlePass   BattlePass @relation(fields: [battlePassId], references: [id])
+  unlockedAt   DateTime   @default(now())
+
+  @@unique([userId, battlePassId])
+  @@index([userId])
+  @@map("user_battle_pass_unlocks")
+}
+
+// Player-to-player trading listings. Admin-added listings are auto-approved
+// (the admin authored them); listings submitted by users through the front-end
+// app (built separately) start PENDING and need an admin to approve/decline
+// before they're shown.
+model MarketplaceListing {
+  id          String              @id @default(auto()) @map("_id") @db.ObjectId
+  title       String
+  description String?
+  category    MarketplaceCategory @default(OTHER)
+  status      MarketplaceStatus   @default(PENDING)
+  priceType   EntryType           @default(MONEY)
+  price       Int                 @default(0)
+  gameId      String?             @db.ObjectId
+  game        Game?               @relation(fields: [gameId], references: [id])
+  sellerId    String              @db.ObjectId
+  seller      User                @relation(fields: [sellerId], references: [id])
+  // Set together when a POINTS/FREE listing is bought (see clans/marketplace
+  // actions) — status flips to SOLD in the same transaction. MONEY listings
+  // never get a buyer here; there's no payment processor, so those stay
+  // "contact the seller" only (same tradeoff as MONEY tournament entries).
+  buyerId     String?             @db.ObjectId
+  buyer       User?               @relation("MarketplacePurchases", fields: [buyerId], references: [id])
+  soldAt      DateTime?
+  imageUrl    String?
+  createdAt   DateTime            @default(now())
+
+  @@index([status])
+  @@map("marketplace_listings")
+}
+
+model Transaction {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  amount    Int
+  currency  String   @default("TND")
+  createdAt DateTime @default(now())
+
+  @@map("transactions")
+}
+
+// Earned achievement badges. The catalog of what a badgeKey means (name,
+// description, category, tier threshold, icon) lives in code, not the DB
+// (src/lib/badges.ts) — this table only records which keys a user has
+// unlocked and when. See src/lib/award-badges.ts for the award logic.
+model UserBadge {
+  id       String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId   String   @db.ObjectId
+  user     User     @relation(fields: [userId], references: [id])
+  badgeKey String
+  earnedAt DateTime @default(now())
+
+  @@unique([userId, badgeKey])
+  @@index([userId])
+  @@map("user_badges")
+}
+
+// A user's ownership of a ShopItem. Added ahead of any acquisition flow (see
+// the ShopItem comment above) purely as the data model + read/display surface —
+// no code path creates rows yet, so every inventory starts, and stays, empty
+// until a purchase/grant/reward flow is built later. Shaped like UserBadge
+// (owner + unique pair on the owned thing) but points at a real ShopItem row
+// via a relation rather than a code-defined catalog key, since shop items are
+// admin-managed database rows, not a fixed set of badge keys in code.
+model UserInventoryItem {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String   @db.ObjectId
+  user       User     @relation(fields: [userId], references: [id])
+  shopItemId String   @db.ObjectId
+  shopItem   ShopItem @relation(fields: [shopItemId], references: [id])
+  acquiredAt DateTime @default(now())
+
+  @@unique([userId, shopItemId])
+  @@index([userId])
+  @@map("user_inventory_items")
+}
+
+// A denormalized activity trail on a user account: who (actor) did what (action)
+// to whom (targetUserId), and when. actorUsername is snapshotted at write time so
+// the log stays readable even if the actor's own username later changes.
+model AuditLog {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  targetUserId  String   @db.ObjectId
+  actorId       String   @db.ObjectId
+  actorUsername String
+  action        String
+  details       String?
+  createdAt     DateTime @default(now())
+
+  @@index([targetUserId, createdAt])
+  @@map("audit_logs")
+}
+
+// Free-text staff notes on a user account — distinct from AuditLog: notes are
+// manually written commentary, not automatically recorded actions.
+model Note {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  targetUserId   String   @db.ObjectId
+  authorId       String   @db.ObjectId
+  authorUsername String
+  body           String
+  createdAt      DateTime @default(now())
+
+  @@index([targetUserId, createdAt])
+  @@map("notes")
+}

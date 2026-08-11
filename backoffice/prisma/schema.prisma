@@ -1,0 +1,385 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MODERATOR
+  USER
+}
+
+enum SubRole {
+  TRUSTED
+  COMMENTOR
+}
+
+enum TournamentStatus {
+  DRAFT
+  REGISTRATION
+  CHECK_IN
+  LIVE
+  COMPLETED
+  ARCHIVED
+}
+
+enum EntryType {
+  FREE
+  POINTS
+  MONEY
+}
+
+enum ParticipationType {
+  SOLO
+  TEAM
+}
+
+enum EventStatus {
+  DRAFT
+  SCHEDULED
+  LIVE
+  COMPLETED
+  ARCHIVED
+  CANCELLED
+}
+
+enum EventType {
+  COMMUNITY
+  NEWS
+  MAINTENANCE
+  GIVEAWAY
+  ANNOUNCEMENT
+  PARTNERSHIP
+}
+
+enum ShopItemStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum ShopItemCategory {
+  AVATAR
+  BADGE
+  BOOST
+  VOUCHER
+  MERCH
+  OTHER
+}
+
+enum BattlePassStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum MarketplaceStatus {
+  PENDING
+  APPROVED
+  DECLINED
+  ARCHIVED
+  SOLD
+}
+
+enum MarketplaceCategory {
+  ACCOUNT
+  IN_GAME_ITEM
+  BOOST_SERVICE
+  GEAR
+  OTHER
+}
+
+model User {
+  id                 String    @id @default(auto()) @map("_id") @db.ObjectId
+  username           String    @unique
+  email              String    @unique
+  fullName           String?
+  phone              String?
+  passwordHash       String
+  role               Role      @default(USER)
+  subRoles           SubRole[] @default([])
+  // Independent flags, not a status enum: a banned user can't log in at all;
+  // a blocked user can log in and use everything except join tournaments;
+  // market/shop-blocked can log in and play but not use that one module.
+  // Each *Until is the expiry — the restriction is only in effect while
+  // the flag is true AND *Until is in the future (see lib/restrictions.ts).
+  banned             Boolean   @default(false)
+  bannedUntil        DateTime?
+  blocked            Boolean   @default(false)
+  blockedUntil       DateTime?
+  marketBlocked      Boolean   @default(false)
+  marketBlockedUntil DateTime?
+  shopBlocked        Boolean   @default(false)
+  shopBlockedUntil   DateTime?
+  points             Int       @default(0)
+  level              Int       @default(1)
+  // XP toward the *next* level — always kept < the current level's required XP
+  // (see lib/level-xp.ts: normalizeLevelXp carries any overflow into level-ups
+  // whenever this or level is set). Required XP per 5-level tier is
+  // admin-configured via LevelXpRule (the /levels page).
+  xp                 Int       @default(0)
+  avatarUrl          String?
+  // Frontoffice-owned fields, mirrored here only so this schema's `db push`
+  // doesn't drop indexes/data the front office depends on (friendCode's
+  // unique index in particular — see the frontoffice User model comment).
+  // inventoryPublic mirrored too even though it has no index of its own — a
+  // moderation-relevant privacy flag is cheap to keep in sync, unlike
+  // frontoffice's purely cosmetic profileTheme, which this schema does NOT
+  // mirror because backoffice has no use for it.
+  bio                String?
+  friendCode         String?   @unique
+  bannerImageUrl     String?
+  inventoryPublic    Boolean   @default(true)
+  lastLoginAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  participations       TournamentParticipant[]
+  eventAttendances     EventAttendee[]
+  marketplaceListings  MarketplaceListing[]
+  marketplacePurchases MarketplaceListing[]    @relation("MarketplacePurchases")
+
+  @@map("users")
+}
+
+// Admin-configured XP curve: `tier` groups 5 consecutive levels — tier 1 =
+// levels 1-5, tier 2 = levels 6-10, etc. (see lib/level-xp.ts:tierForLevel) —
+// and xpPerLevel is how much XP each level within that band costs. A level
+// beyond the highest configured tier falls back to that tier's xpPerLevel,
+// so an admin only has to configure early tiers explicitly; nothing existing
+// here at all falls back further to a hardcoded DEFAULT_XP_PER_LEVEL.
+model LevelXpRule {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  tier       Int      @unique
+  xpPerLevel Int
+  updatedAt  DateTime @updatedAt
+
+  @@map("level_xp_rules")
+}
+
+model Game {
+  id     String  @id @default(auto()) @map("_id") @db.ObjectId
+  slug   String  @unique
+  name   String
+  icon   String?
+  active Boolean @default(true)
+
+  tournaments         Tournament[]
+  events              Event[]
+  shopItems           ShopItem[]
+  marketplaceListings MarketplaceListing[]
+
+  @@map("games")
+}
+
+model Tournament {
+  id                 String            @id @default(auto()) @map("_id") @db.ObjectId
+  title              String
+  description        String?
+  additionalInfo     String?
+  gameId             String            @db.ObjectId
+  game               Game              @relation(fields: [gameId], references: [id])
+  status             TournamentStatus  @default(DRAFT)
+  entryType          EntryType         @default(FREE)
+  entryCost          Int               @default(0)
+  prizePool          Int               @default(0)
+  participationType  ParticipationType @default(SOLO)
+  backgroundImageUrl String?
+  logoImageUrl       String?
+  startAt            DateTime
+  createdAt          DateTime          @default(now())
+
+  participants TournamentParticipant[]
+
+  @@map("tournaments")
+}
+
+// Recorded once the front-end registration flow (built separately) signs a
+// user up for a tournament — teamName is only meaningful when the tournament's
+// participationType is TEAM.
+model TournamentParticipant {
+  id           String     @id @default(auto()) @map("_id") @db.ObjectId
+  tournamentId String     @db.ObjectId
+  tournament   Tournament @relation(fields: [tournamentId], references: [id])
+  userId       String     @db.ObjectId
+  user         User       @relation(fields: [userId], references: [id])
+  teamName     String?
+  joinedAt     DateTime   @default(now())
+
+  @@unique([tournamentId, userId])
+  @@index([tournamentId])
+  @@map("tournament_participants")
+}
+
+// Community events / news / maintenance windows shown alongside tournaments —
+// non-competitive, so no prize pool or entry cost like Tournament has.
+model Event {
+  id                 String      @id @default(auto()) @map("_id") @db.ObjectId
+  title              String
+  description        String?
+  additionalInfo     String?
+  type               EventType   @default(COMMUNITY)
+  status             EventStatus @default(DRAFT)
+  gameId             String?     @db.ObjectId
+  game               Game?       @relation(fields: [gameId], references: [id])
+  location           String?
+  capacity           Int?
+  backgroundImageUrl String?
+  logoImageUrl       String?
+  startAt            DateTime
+  endAt              DateTime?
+  createdAt          DateTime    @default(now())
+
+  attendees EventAttendee[]
+
+  @@map("events")
+}
+
+// Recorded once the front-end RSVP flow (built separately) signs a user up
+// for an event.
+model EventAttendee {
+  id       String   @id @default(auto()) @map("_id") @db.ObjectId
+  eventId  String   @db.ObjectId
+  event    Event    @relation(fields: [eventId], references: [id])
+  userId   String   @db.ObjectId
+  user     User     @relation(fields: [userId], references: [id])
+  joinedAt DateTime @default(now())
+
+  @@unique([eventId, userId])
+  @@index([eventId])
+  @@map("event_attendees")
+}
+
+// Admin-curated storefront items — priced in points or money (reuses Tournament's
+// EntryType). Purchasing/inventory is out of scope here: the front-office app that
+// will let users buy these doesn't exist yet, so there's no order/ownership model.
+model ShopItem {
+  id          String           @id @default(auto()) @map("_id") @db.ObjectId
+  title       String
+  description String?
+  category    ShopItemCategory @default(OTHER)
+  status      ShopItemStatus   @default(DRAFT)
+  priceType   EntryType        @default(POINTS)
+  price       Int              @default(0)
+  stock       Int?
+  gameId      String?          @db.ObjectId
+  game        Game?            @relation(fields: [gameId], references: [id])
+  imageUrl    String?
+  createdAt   DateTime         @default(now())
+
+  @@map("shop_items")
+}
+
+// Admin-configured Battle Pass season — a points-gated reward ladder shown
+// read-only in the front office (Unlock Premium is a disabled "Coming soon"
+// button, same precedent as ShopItemCard: no purchase/point-deduction flow
+// exists yet, only display). Multiple seasons can exist; the front office
+// shows whichever has status ACTIVE (ties broken by startAt desc). startAt/
+// endAt are both required and are informational/display fields only, not
+// the gating mechanism — unlike Event.endAt, a season always has a defined end.
+model BattlePass {
+  id                String           @id @default(auto()) @map("_id") @db.ObjectId
+  title             String
+  description       String?
+  status            BattlePassStatus @default(DRAFT)
+  premiumPointsCost Int              @default(0)
+  startAt           DateTime
+  endAt             DateTime
+  createdAt         DateTime         @default(now())
+
+  tiers BattlePassTier[]
+
+  @@map("battle_passes")
+}
+
+// One rung of a season's reward ladder. Reward content is freeform text
+// (not linked to real ShopItem rows) — matches what the admin types, e.g.
+// "500 Points" or "Legendary Avatar Frame". Tier numbers aren't a stored
+// count; they're just how many BattlePassTier rows exist for a season,
+// added one at a time (mirrors LevelXpRule's per-tier-row pattern).
+model BattlePassTier {
+  id            String     @id @default(auto()) @map("_id") @db.ObjectId
+  battlePassId  String     @db.ObjectId
+  battlePass    BattlePass @relation(fields: [battlePassId], references: [id])
+  tier          Int
+  freeReward    String
+  premiumReward String
+
+  @@unique([battlePassId, tier])
+  @@index([battlePassId])
+  @@map("battle_pass_tiers")
+}
+
+// Player-to-player trading listings. Admin-added listings are auto-approved
+// (the admin authored them); listings submitted by users through the front-end
+// app (built separately) start PENDING and need an admin to approve/decline
+// before they're shown.
+model MarketplaceListing {
+  id          String              @id @default(auto()) @map("_id") @db.ObjectId
+  title       String
+  description String?
+  category    MarketplaceCategory @default(OTHER)
+  status      MarketplaceStatus   @default(PENDING)
+  priceType   EntryType           @default(MONEY)
+  price       Int                 @default(0)
+  gameId      String?             @db.ObjectId
+  game        Game?               @relation(fields: [gameId], references: [id])
+  sellerId    String              @db.ObjectId
+  seller      User                @relation(fields: [sellerId], references: [id])
+  // Set together when the front office's buy flow sells a POINTS/FREE listing
+  // (schema mirror only — that flow lives in frontoffice; this just keeps the
+  // enum/fields in sync so this app's Prisma client can read SOLD documents).
+  buyerId     String?             @db.ObjectId
+  buyer       User?               @relation("MarketplacePurchases", fields: [buyerId], references: [id])
+  soldAt      DateTime?
+  imageUrl    String?
+  createdAt   DateTime            @default(now())
+
+  @@index([status])
+  @@map("marketplace_listings")
+}
+
+model Transaction {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  amount    Int
+  currency  String   @default("TND")
+  createdAt DateTime @default(now())
+
+  @@map("transactions")
+}
+
+// A denormalized activity trail on a user account: who (actor) did what (action)
+// to whom (targetUserId), and when. actorUsername is snapshotted at write time so
+// the log stays readable even if the actor's own username later changes.
+model AuditLog {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  targetUserId  String   @db.ObjectId
+  actorId       String   @db.ObjectId
+  actorUsername String
+  action        String
+  details       String?
+  createdAt     DateTime @default(now())
+
+  @@index([targetUserId, createdAt])
+  @@map("audit_logs")
+}
+
+// Free-text staff notes on a user account — distinct from AuditLog: notes are
+// manually written commentary, not automatically recorded actions.
+model Note {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  targetUserId   String   @db.ObjectId
+  authorId       String   @db.ObjectId
+  authorUsername String
+  body           String
+  createdAt      DateTime @default(now())
+
+  @@index([targetUserId, createdAt])
+  @@map("notes")
+}

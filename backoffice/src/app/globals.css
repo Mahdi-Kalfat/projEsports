@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+:root {
+  --base: #0a0a0f;
+  --surface: #14141c;
+  --surface-raised: #1e1e2a;
+
+  --primary: #ff1e3c;
+  --primary-glow: #ff335a;
+  --crimson: #b0001e;
+
+  --accent: #00e5ff;
+  --success: #28ff8b;
+  --warning: #ffc542;
+
+  --foreground: #f2f2f7;
+  --muted: #9a9ab0;
+
+  --border-color: #26263480;
+
+  /* Chart categorical series — validated against --surface-raised with
+     scripts/validate_palette.js from the dataviz skill (dark mode, all-pairs PASS).
+     Deeper steps than --accent on purpose: the UI accent is too light (OKLCH L 0.84)
+     for a dark-mode data mark, which needs L 0.48-0.67 to hit the contrast band. */
+  --chart-1: #0891b2;
+  --chart-2: #8b5cf6;
+  --chart-3: #ec4899;
+  --chart-grid: #ffffff14;
+}
+
+@theme inline {
+  /* Named "canvas", not "base" — Tailwind reserves the "-base" suffix for its own
+     font-size scale, so a color token called --color-base would make `text-base`
+     ambiguous between "1rem text" and "this color". */
+  --color-canvas: var(--base);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-primary: var(--primary);
+  --color-primary-glow: var(--primary-glow);
+  --color-crimson: var(--crimson);
+  --color-accent: var(--accent);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border-color);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-grid: var(--chart-grid);
+
+  --font-display: var(--font-chakra-petch);
+  --font-sans: var(--font-inter);
+}
+
+body {
+  background: var(--base);
+  color: var(--foreground);
+}
+
+.neon-text {
+  color: var(--primary);
+  text-shadow:
+    0 0 6px var(--primary),
+    0 0 18px rgba(255, 30, 60, 0.6);
+}
+
+.btn-neon {
+  box-shadow:
+    0 0 12px rgba(255, 30, 60, 0.5),
+    inset 0 0 6px rgba(255, 30, 60, 0.3);
+}
+
+/* Range inputs default to the OS's light theme (white track) regardless of page
+   theme — `accent-color` alone only recolors the filled portion in Chromium, not
+   the remaining track, so it looks broken on a dark surface. Style both pseudo-
+   elements explicitly instead. */
+.range-input {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 16px;
+  background: transparent;
+  cursor: pointer;
+}
+.range-input::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--border-color);
+}
+.range-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 6px rgba(255, 30, 60, 0.7);
+}
+.range-input::-moz-range-track {
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--border-color);
+}
+.range-input::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 6px rgba(255, 30, 60, 0.7);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

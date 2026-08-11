@@ -1,0 +1,131 @@
+@import "tailwindcss";
+
+:root {
+  --base: #0a0a0f;
+  --surface: #14141c;
+  --surface-raised: #1e1e2a;
+
+  --primary: #ff1e3c;
+  --primary-glow: #ff335a;
+  --crimson: #b0001e;
+
+  --accent: #00e5ff;
+  --success: #28ff8b;
+  --warning: #ffc542;
+
+  --foreground: #f2f2f7;
+  --muted: #9a9ab0;
+
+  --border-color: #26263480;
+}
+
+@theme inline {
+  /* Named "canvas", not "base" — Tailwind reserves the "-base" suffix for its own
+     font-size scale. Same token names as backoffice/src/app/globals.css so the two
+     apps share one visual language. */
+  --color-canvas: var(--base);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-primary: var(--primary);
+  --color-primary-glow: var(--primary-glow);
+  --color-crimson: var(--crimson);
+  --color-accent: var(--accent);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border-color);
+
+  --font-display: var(--font-chakra-petch);
+  --font-sans: var(--font-inter);
+}
+
+body {
+  background: var(--base);
+  color: var(--foreground);
+}
+
+.neon-text {
+  color: var(--primary);
+  text-shadow:
+    0 0 6px var(--primary),
+    0 0 18px rgba(255, 30, 60, 0.6);
+}
+
+.btn-neon {
+  box-shadow:
+    0 0 12px rgba(255, 30, 60, 0.5),
+    inset 0 0 6px rgba(255, 30, 60, 0.3);
+}
+
+/* Landing-hero ambient effects — same red/cyan glow language as .btn-neon/.neon-text,
+   just animated. Kept to two small keyframes; everything else motion-related is
+   handled in JS via the `motion` library for scroll/hover/tap interactions. */
+@keyframes glow-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.05);
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.animate-glow-pulse {
+  animation: glow-pulse 4s ease-in-out infinite;
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+/* Ambient grid used behind page content (AmbientBackground) — faded out toward the
+   edges via mask so it reads as atmosphere, not a literal grid. */
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(242, 242, 247, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(242, 242, 247, 0.05) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+/* Frosted-glass card surface — used instead of flat --surface-raised anywhere the
+   card sits over imagery or the ambient background, so depth reads through. */
+.glass-panel {
+  background: rgba(30, 30, 42, 0.66);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+/* Hover glow for interactive cards — pairs with a plain `transition` on the element
+   so both the border-color (Tailwind) and this shadow animate together. */
+.hover-glow {
+  transition: box-shadow 0.3s ease;
+}
+.hover-glow:hover {
+  box-shadow:
+    0 12px 32px -12px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 30, 60, 0.25),
+    0 0 28px -6px rgba(255, 30, 60, 0.35);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
