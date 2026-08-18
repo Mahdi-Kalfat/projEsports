@@ -33,11 +33,21 @@ enum EntryType {
   FREE
   POINTS
   MONEY
+  // Priced in the player's own cc balance — unlike MONEY (paid out of band,
+  // needs an admin to verify), cc is a real in-system balance, so CC-priced
+  // purchases deduct it directly at buy time. See buyShopItem.
+  CC
 }
 
 enum ParticipationType {
   SOLO
   TEAM
+}
+
+enum TournamentRegistrationStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum EventStatus {
@@ -71,6 +81,28 @@ enum ShopItemCategory {
   VOUCHER
   MERCH
   OTHER
+}
+
+enum ItemStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+// XP_BOOST/POINTS_BOOST are percentage bumps applied to the economy field of
+// the same name when a UserItem is consumed; CC_GRANT is a flat cc amount
+// instead (see lib/item-effects.ts and inventory/actions.ts:useItem, which
+// exhaustively switch on this — add a case there whenever a new type is
+// introduced here). CC_GRANT items are how a shop CC-bundle purchase (see
+// ShopItem.grantsItem) actually pays out, once an admin approves the
+// resulting ContactRequest — see ContactRequest.shopItem.
+enum ItemEffectType {
+  XP_BOOST
+  POINTS_BOOST
+  CC_GRANT
+  // Flat points amount, not a percentage — mirrors CC_GRANT (see the
+  // ItemEffectType comment pattern in item-effects.ts's describeItemEffect).
+  POINTS_GRANT
 }
 
 enum BattlePassStatus {
@@ -136,86 +168,185 @@ enum ClanJoinRequestStatus {
   DECLINED
 }
 
+// What an admin has triaged a ContactRequest as — drives which action panel
+// shows on the back office's report detail page (e.g. DEPOSIT_REQUEST reveals
+// the "Add CC Coins" form). Starts GENERAL; only an admin changes it, as part
+// of responding.
+enum ContactType {
+  GENERAL
+  DEPOSIT_REQUEST
+  ACCOUNT_ISSUE
+  BUG_REPORT
+  OTHER
+}
+
+enum ContactStatus {
+  OPEN
+  CLOSED
+}
+
 model User {
-  id                 String       @id @default(auto()) @map("_id") @db.ObjectId
-  username           String       @unique
-  email              String       @unique
-  fullName           String?
-  phone              String?
-  passwordHash       String
-  role               Role         @default(USER)
-  subRoles           SubRole[]    @default([])
+  id                      String       @id @default(auto()) @map("_id") @db.ObjectId
+  username                String       @unique
+  email                   String       @unique
+  fullName                String?
+  phone                   String?
+  passwordHash            String
+  role                    Role         @default(USER)
+  subRoles                SubRole[]    @default([])
   // Independent flags, not a status enum: a banned user can't log in at all;
   // a blocked user can log in and use everything except join tournaments;
   // market/shop-blocked can log in and play but not use that one module.
   // Each *Until is the expiry — the restriction is only in effect while
   // the flag is true AND *Until is in the future (see lib/restrictions.ts).
-  banned             Boolean      @default(false)
-  bannedUntil        DateTime?
-  blocked            Boolean      @default(false)
-  blockedUntil       DateTime?
-  marketBlocked      Boolean      @default(false)
-  marketBlockedUntil DateTime?
-  shopBlocked        Boolean      @default(false)
-  shopBlockedUntil   DateTime?
-  points             Int          @default(0)
-  level              Int          @default(1)
+  banned                  Boolean      @default(false)
+  bannedUntil             DateTime?
+  blocked                 Boolean      @default(false)
+  blockedUntil            DateTime?
+  marketBlocked           Boolean      @default(false)
+  marketBlockedUntil      DateTime?
+  shopBlocked             Boolean      @default(false)
+  shopBlockedUntil        DateTime?
+  points                  Int          @default(0)
+  // The site's real-money-backed currency (1 cc = 1 DT) — unlike points, this
+  // can only ever be credited by an admin through an open ContactRequest (see
+  // ContactRequest/ContactMessage below and backoffice's addCcCoins), never
+  // through a direct economy edit.
+  ccCoins                 Int          @default(0)
+  level                   Int          @default(1)
   // XP toward the *next* level — admin-managed from the back office (see
   // LevelXpRule below); this app only reads it for display.
-  xp                 Int          @default(0)
-  avatarUrl          String?
+  xp                      Int          @default(0)
+  avatarUrl               String?
   // Freeform "about me" text shown on the public profile — distinct from the
   // admin-only Note model, which is staff commentary the user never sees.
-  bio                String?
+  bio                     String?
   // Shareable code (e.g. "AB3X-9KPQ") so a player can be friended without the
   // other person already knowing their username — generated at signup by
   // src/lib/friend-code.ts. Optional at the schema level (not every legacy/seeded
   // row has one yet) rather than required, so a missing code never breaks reads.
-  friendCode         String?      @unique
+  friendCode              String?      @unique
   // Profile personalization — banner replaces the default gradient when set;
   // profileTheme re-tints the accent bits of the profile (see ProfileTheme above).
-  bannerImageUrl     String?
-  profileTheme       ProfileTheme @default(CRIMSON)
+  bannerImageUrl          String?
+  profileTheme            ProfileTheme @default(CRIMSON)
   // Whether other players can see this account's inventory contents (the
   // profile sidebar widget and /inventory/[username]) — the owner can always
   // see their own regardless of this flag. Defaults to public like the rest
   // of the profile.
-  inventoryPublic    Boolean      @default(true)
-  lastLoginAt        DateTime?
-  createdAt          DateTime     @default(now())
-  updatedAt          DateTime     @updatedAt
+  inventoryPublic         Boolean      @default(true)
+  // Linked Discord account — set only by the Discord bot's /link command
+  // (see /discord-bot) once the user redeems a DiscordLinkCode below, never
+  // written to directly by this app. discordUsername is a display cache
+  // refreshed each time the bot (re-)links the account. Not @unique: nearly
+  // every existing row has no discordId yet, and MongoDB's unique index
+  // treats "missing" and "null" as the same value, so a plain unique index
+  // fails immediately with a duplicate-key error across those rows (Mongo
+  // has no schema-level sparse/partial unique support in Prisma today).
+  // One-Discord-account-per-user is instead enforced in discord-bot's /link
+  // handler, which checks for an existing link before writing.
+  discordId               String?
+  discordUsername         String?
+  // Discord's display name (falls back to discordUsername when the member
+  // hasn't set one) — shown as the primary label on the profile's Discord
+  // card, with discordUsername underneath as the "@handle" tag.
+  discordGlobalName       String?
+  // Snapshotted CDN URL, not re-derived — refreshed each time the bot
+  // (re-)links the account, same as discordUsername/discordGlobalName.
+  discordAvatarUrl        String?
+  discordLinkedAt         DateTime?
+  // Opt-in, set only by the Discord bot's /trackactivity command — off by
+  // default, since watching what someone plays is more invasive than the
+  // rest of the Discord link and shouldn't happen without them explicitly
+  // asking for it. currentGame/currentGameStartedAt track the in-progress
+  // session (both null when not currently playing anything tracked); once a
+  // session ends the elapsed time is folded into GameActivity below and
+  // these two are cleared. See discord-bot's activity-tracking.ts.
+  activityTrackingEnabled Boolean      @default(false)
+  currentGame             String?
+  currentGameStartedAt    DateTime?
+  lastLoginAt             DateTime?
+  createdAt               DateTime     @default(now())
+  updatedAt               DateTime     @updatedAt
 
-  participations         TournamentParticipant[]
-  eventAttendances       EventAttendee[]
-  marketplaceListings    MarketplaceListing[]
-  marketplacePurchases   MarketplaceListing[]    @relation("MarketplacePurchases")
-  badges                 UserBadge[]
-  inventoryItems         UserInventoryItem[]
-  battlePassUnlocks      UserBattlePassUnlock[]
-  sentFriendRequests     FriendRequest[]         @relation("SentFriendRequests")
-  receivedFriendRequests FriendRequest[]         @relation("ReceivedFriendRequests")
+  participations                   TournamentParticipant[]
+  eventAttendances                 EventAttendee[]
+  marketplaceListings              MarketplaceListing[]
+  marketplacePurchases             MarketplaceListing[]           @relation("MarketplacePurchases")
+  badges                           UserBadge[]
+  inventoryItems                   UserInventoryItem[]
+  consumableItems                  UserItem[]
+  wheelSpin                        UserWheelSpin?
+  dailyReward                      UserDailyReward?
+  battlePassUnlocks                UserBattlePassUnlock[]
+  sentFriendRequests               FriendRequest[]                @relation("SentFriendRequests")
+  receivedFriendRequests           FriendRequest[]                @relation("ReceivedFriendRequests")
   // Virtual back-relations — no physical index/column on `users`, so unlike
   // friendCode's @unique, nothing here needs mirroring into backoffice's schema.
-  conversationsAsUserA   Conversation[]          @relation("ConversationsAsUserA")
-  conversationsAsUserB   Conversation[]          @relation("ConversationsAsUserB")
-  sentMessages           Message[]               @relation("SentMessages")
-  receivedMessages       Message[]               @relation("ReceivedMessages")
-  posts                  Post[]                  @relation("AuthoredPosts")
-  postLikes              PostLike[]              @relation("PostLikes")
-  postComments           PostComment[]           @relation("PostComments")
+  conversationsAsUserA             Conversation[]                 @relation("ConversationsAsUserA")
+  conversationsAsUserB             Conversation[]                 @relation("ConversationsAsUserB")
+  sentMessages                     Message[]                      @relation("SentMessages")
+  receivedMessages                 Message[]                      @relation("ReceivedMessages")
+  posts                            Post[]                         @relation("AuthoredPosts")
+  postLikes                        PostLike[]                     @relation("PostLikes")
+  postComments                     PostComment[]                  @relation("PostComments")
   // Wall/guestbook comments — receivedProfileComments is what shows at the
   // bottom of *this* user's own profile page; authoredProfileComments is
   // everything they've left on other people's profiles.
-  receivedProfileComments ProfileComment[]        @relation("ProfileWall")
-  authoredProfileComments ProfileComment[]        @relation("AuthoredProfileComments")
+  receivedProfileComments          ProfileComment[]               @relation("ProfileWall")
+  authoredProfileComments          ProfileComment[]               @relation("AuthoredProfileComments")
   // Both nullable/singular, not lists: a user owns at most one clan (Clan.ownerId
   // is @unique) and belongs to at most one clan total, whether as owner or member
   // (ClanMembership.userId is @unique) — see the Clan model comment.
-  ownedClan              Clan?                   @relation("OwnedClan")
-  clanMembership         ClanMembership?
-  clanJoinRequests       ClanJoinRequest[]
+  ownedClan                        Clan?                          @relation("OwnedClan")
+  clanMembership                   ClanMembership?
+  clanJoinRequests                 ClanJoinRequest[]
+  // A tournament registration this user submitted (as captain) vs. one they
+  // were added to as a roster slot — see TournamentRegistration's comment.
+  submittedTournamentRegistrations TournamentRegistration[]       @relation("SubmittedTournamentRegistrations")
+  tournamentRegistrationSlots      TournamentRegistrationMember[]
+  contactRequests                  ContactRequest[]               @relation("ContactRequestOwner")
+  contactMessagesAuthored          ContactMessage[]               @relation("ContactMessageAuthor")
 
+  @@index([discordId])
   @@map("users")
+}
+
+// A short-lived, single-use code generated from the profile page (see
+// lib/discord-link-code.ts) and redeemed with the Discord bot's /link
+// command to prove a Discord account and a site account belong to the same
+// person. No relation field back on User — this is transient linking state,
+// not user data, so it follows the same denormalized-id pattern as
+// AuditLog.actorId rather than a real Prisma relation. userId is @unique so
+// requesting a new code just replaces whatever code was issued before it
+// (see createDiscordLinkCode's upsert).
+model DiscordLinkCode {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  code      String   @unique
+  userId    String   @unique @db.ObjectId
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("discord_link_codes")
+}
+
+// One row per (user, game) the Discord bot has ever seen them play, while
+// activityTrackingEnabled was on — accumulated total, not a session log.
+// Written only by discord-bot's activity-tracking.ts (see User's
+// currentGame/currentGameStartedAt comment for how a session gets folded in
+// here when it ends); this app only reads it for the profile page's game
+// activity card. No relation field back on User, same denormalized-id
+// pattern as DiscordLinkCode.userId above.
+model GameActivity {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId       String   @db.ObjectId
+  gameName     String
+  totalSeconds Int      @default(0)
+  lastPlayedAt DateTime @default(now())
+
+  @@unique([userId, gameName])
+  @@index([userId])
+  @@map("game_activities")
 }
 
 // A friend connection is a single row: PENDING when sent, then either ACCEPTED
@@ -454,30 +585,52 @@ model Game {
 }
 
 model Tournament {
-  id                 String            @id @default(auto()) @map("_id") @db.ObjectId
-  title              String
-  description        String?
-  additionalInfo     String?
-  gameId             String            @db.ObjectId
-  game               Game              @relation(fields: [gameId], references: [id])
-  status             TournamentStatus  @default(DRAFT)
-  entryType          EntryType         @default(FREE)
-  entryCost          Int               @default(0)
-  prizePool          Int               @default(0)
-  participationType  ParticipationType @default(SOLO)
-  backgroundImageUrl String?
-  logoImageUrl       String?
-  startAt            DateTime
-  createdAt          DateTime          @default(now())
+  id                  String            @id @default(auto()) @map("_id") @db.ObjectId
+  title               String
+  description         String?
+  additionalInfo      String?
+  gameId              String            @db.ObjectId
+  game                Game              @relation(fields: [gameId], references: [id])
+  status              TournamentStatus  @default(DRAFT)
+  entryType           EntryType         @default(FREE)
+  entryCost           Int               @default(0)
+  prizePool           Int               @default(0)
+  participationType   ParticipationType @default(SOLO)
+  backgroundImageUrl  String?
+  logoImageUrl        String?
+  startAt             DateTime
+  createdAt           DateTime          @default(now())
+  // Nullable = unlimited, same convention as Event.capacity. For SOLO this
+  // caps total registered players; TEAM tournaments have no real Team entity
+  // (see TournamentParticipant.teamName), so it caps the number of distinct
+  // team names among participants instead — see lib/tournament-capacity.ts.
+  capacity            Int?
+  // Admin-entered skill-level label for the tournament as a whole (e.g. "Gold
+  // Tier") with its own uploaded image — not derived from participants' own
+  // ranks/levels, just a badge the admin sets when creating the tournament.
+  averageRankName     String?
+  averageRankImageUrl String?
+  // Freeform admin-entered region label (e.g. "MENA", "Europe") — no fixed
+  // enum, since the set of regions isn't platform-defined anywhere else.
+  region              String?
+  // TEAM only — caps how many players (captain + added members) a single
+  // TournamentRegistration roster can have. Nullable = unlimited. Enforced at
+  // submission (submitTournamentRegistration) and re-checked at approval,
+  // same pattern as `capacity`.
+  maxTeamSize         Int?
 
-  participants TournamentParticipant[]
+  participants  TournamentParticipant[]
+  registrations TournamentRegistration[]
 
   @@map("tournaments")
 }
 
-// Recorded once the front-end registration flow (built separately) signs a
-// user up for a tournament — teamName is only meaningful when the tournament's
-// participationType is TEAM.
+// Recorded once the front-end registration flow signs a user up for a
+// tournament. For TEAM tournaments this is only ever created by
+// approveTournamentRegistration (back office) once an admin approves a
+// TournamentRegistration below — teamName/teamTag/teamLogoUrl are snapshotted
+// from that registration at approval time (like AuditLog.actorUsername), so
+// they stay meaningful even if nothing else references the registration again.
 model TournamentParticipant {
   id           String     @id @default(auto()) @map("_id") @db.ObjectId
   tournamentId String     @db.ObjectId
@@ -485,11 +638,59 @@ model TournamentParticipant {
   userId       String     @db.ObjectId
   user         User       @relation(fields: [userId], references: [id])
   teamName     String?
+  teamTag      String?
+  teamLogoUrl  String?
   joinedAt     DateTime   @default(now())
 
   @@unique([tournamentId, userId])
   @@index([tournamentId])
   @@map("tournament_participants")
+}
+
+// A team's registration *request* for one TEAM tournament — filled out via
+// the "Participate" modal by one player (the captain, auto-added as the
+// first member), and reviewed by an admin in the back office. Scoped to a
+// single tournament, unlike the removed persistent Team model: there's no
+// cross-tournament roster here, just a one-shot approval workflow. Approving
+// (see backoffice's approveTournamentRegistration) creates the real
+// TournamentParticipant rows, one per member; rejecting creates nothing.
+model TournamentRegistration {
+  id            String                       @id @default(auto()) @map("_id") @db.ObjectId
+  tournamentId  String                       @db.ObjectId
+  tournament    Tournament                   @relation(fields: [tournamentId], references: [id])
+  teamName      String
+  teamTag       String
+  teamLogoUrl   String?
+  status        TournamentRegistrationStatus @default(PENDING)
+  submittedById String                       @db.ObjectId
+  submittedBy   User                         @relation("SubmittedTournamentRegistrations", fields: [submittedById], references: [id])
+  createdAt     DateTime                     @default(now())
+  respondedAt   DateTime?
+  // First-round bracket position (0-indexed), assigned once at approval time
+  // by randomly picking an empty slot within the tournament's bracket size
+  // (see backoffice's approveTournamentRegistration and lib/bracket.ts) — null
+  // until approved. Never reassigned afterward, so a team's slot stays stable
+  // even as later teams register.
+  bracketSlot   Int?
+
+  members TournamentRegistrationMember[]
+
+  @@index([tournamentId, status])
+  @@map("tournament_registrations")
+}
+
+// One roster slot on a registration — includes the captain too (added
+// automatically at submission), so approval only has to walk this list to
+// create every TournamentParticipant row.
+model TournamentRegistrationMember {
+  id             String                 @id @default(auto()) @map("_id") @db.ObjectId
+  registrationId String                 @db.ObjectId
+  registration   TournamentRegistration @relation(fields: [registrationId], references: [id])
+  userId         String                 @db.ObjectId
+  user           User                   @relation(fields: [userId], references: [id])
+
+  @@unique([registrationId, userId])
+  @@map("tournament_registration_members")
 }
 
 // Community events / news / maintenance windows shown alongside tournaments —
@@ -532,27 +733,100 @@ model EventAttendee {
 }
 
 // Admin-curated storefront items — priced in points or money (reuses Tournament's
-// EntryType). Ownership is tracked via UserInventoryItem below (added ahead of any
-// acquisition flow — there's still no purchase/grant path yet, so every user's
-// inventory starts, and stays, empty until one exists). Purchasing itself remains
-// out of scope: the front-office buy flow doesn't exist yet.
+// EntryType). Ownership is tracked via UserInventoryItem below for items with no
+// grantsItem (still no purchase/grant path for those — display only). Items with
+// grantsItem set (the cc bundles, e.g. "25 cc") ARE purchasable: buying one opens
+// a ContactRequest instead of granting anything directly (see frontoffice's
+// buyShopItem) — an admin approving that ticket (see backoffice's
+// approveShopPurchase) is what actually adds grantsItem to the user's inventory.
 model ShopItem {
-  id          String           @id @default(auto()) @map("_id") @db.ObjectId
-  title       String
-  description String?
-  category    ShopItemCategory @default(OTHER)
-  status      ShopItemStatus   @default(DRAFT)
-  priceType   EntryType        @default(POINTS)
-  price       Int              @default(0)
-  stock       Int?
-  gameId      String?          @db.ObjectId
-  game        Game?            @relation(fields: [gameId], references: [id])
-  imageUrl    String?
-  createdAt   DateTime         @default(now())
+  id                String           @id @default(auto()) @map("_id") @db.ObjectId
+  title             String
+  description       String?
+  category          ShopItemCategory @default(OTHER)
+  status            ShopItemStatus   @default(DRAFT)
+  priceType         EntryType        @default(POINTS)
+  price             Int              @default(0)
+  stock             Int?
+  gameId            String?          @db.ObjectId
+  game              Game?            @relation(fields: [gameId], references: [id])
+  imageUrl          String?
+  createdAt         DateTime         @default(now())
+  // Optional — only set for purchasable items (currently the cc bundles).
+  grantsItemId      String?          @db.ObjectId
+  grantsItem        Item?            @relation("ShopItemGrant", fields: [grantsItemId], references: [id])
+  // Purchase flow for grantsItem-linked listings: true (default) opens a
+  // ContactRequest for an admin to approve, same as today; false grants the
+  // item the moment someone buys it, no review step. Irrelevant when
+  // grantsItemId is unset (nothing is purchasable yet either way).
+  needsConfirmation Boolean          @default(true)
 
   inventoryEntries UserInventoryItem[]
+  purchaseReports  ContactRequest[]
 
   @@map("shop_items")
+}
+
+// Mirror of backoffice's Item — admin-defined consumable items with a
+// gameplay effect (e.g. "XP Boost" at effectValue 25 = +25%, or "25 CC
+// Voucher" at CC_GRANT/25), managed from the back office's /items page.
+// Distinct from ShopItem, which is a cosmetic/storefront good with no effect
+// of its own (though a ShopItem can *grant* one of these on purchase approval
+// — see ShopItem.grantsItem). Ownership lives in UserItem below; this app
+// owns the "Use" action that applies the effect and consumes it.
+model Item {
+  id          String         @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  description String?
+  status      ItemStatus     @default(DRAFT)
+  effectType  ItemEffectType @default(XP_BOOST)
+  effectValue Int            @default(0)
+  imageUrl    String?
+  createdAt   DateTime       @default(now())
+
+  grants             UserItem[]
+  freeTierRewards    BattlePassTier[] @relation("BattlePassFreeReward")
+  premiumTierRewards BattlePassTier[] @relation("BattlePassPremiumReward")
+  wheelSlot          LuckyWheelSlot?
+  dailyRewardDays    DailyRewardDay[]
+  shopItemGrants     ShopItem[]       @relation("ShopItemGrant")
+
+  @@map("items")
+}
+
+// Mirror of backoffice's RankTier — an optional admin override of a single
+// rank's name/image, managed from the back office's /ranks page. The rank
+// ladder itself (which level bands map to which tier index, 0-18) stays a
+// fixed constant in code (see lib/rank.ts's DEFAULT_RANK_TIERS) rather than
+// living in the DB — only the display (name/image) is admin-editable, and
+// only for tiers an admin has actually customized (see getRank falling back
+// to the hardcoded default when no row exists for a tier).
+model RankTier {
+  id       String  @id @default(auto()) @map("_id") @db.ObjectId
+  tier     Int     @unique
+  name     String?
+  imageUrl String?
+
+  @@map("rank_tiers")
+}
+
+// One admin grant of an Item to a user's inventory — quantity stacks repeat
+// grants of the same item instead of creating duplicate rows (unlike
+// UserInventoryItem's one-time ShopItem ownership, these are consumable: see
+// useItem in inventory/actions.ts, which decrements quantity and deletes the
+// row once it hits 0).
+model UserItem {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String   @db.ObjectId
+  user       User     @relation(fields: [userId], references: [id])
+  itemId     String   @db.ObjectId
+  item       Item     @relation(fields: [itemId], references: [id])
+  quantity   Int      @default(1)
+  acquiredAt DateTime @default(now())
+
+  @@unique([userId, itemId])
+  @@index([userId])
+  @@map("user_items")
 }
 
 // Admin-configured Battle Pass season — a points-gated reward ladder shown
@@ -578,22 +852,85 @@ model BattlePass {
   @@map("battle_passes")
 }
 
-// One rung of a season's reward ladder. Reward content is freeform text
-// (not linked to real ShopItem rows) — matches what the admin types, e.g.
-// "500 Points" or "Legendary Avatar Frame". Tier numbers aren't a stored
-// count; they're just how many BattlePassTier rows exist for a season,
-// added one at a time (mirrors LevelXpRule's per-tier-row pattern).
+// One rung of a season's reward ladder. Rewards are real Item rows (picked
+// from the admin's Items catalog), not freeform text — both slots are
+// optional since a newly-added tier starts with neither set, and an admin
+// may only want to fill in one side. Managed from the back office's
+// /battle-pass/[id] page; this app only reads it for display.
 model BattlePassTier {
   id            String     @id @default(auto()) @map("_id") @db.ObjectId
   battlePassId  String     @db.ObjectId
   battlePass    BattlePass @relation(fields: [battlePassId], references: [id])
   tier          Int
-  freeReward    String
-  premiumReward String
+  freeItemId    String?    @db.ObjectId
+  freeItem      Item?      @relation("BattlePassFreeReward", fields: [freeItemId], references: [id])
+  premiumItemId String?    @db.ObjectId
+  premiumItem   Item?      @relation("BattlePassPremiumReward", fields: [premiumItemId], references: [id])
 
   @@unique([battlePassId, tier])
   @@index([battlePassId])
   @@map("battle_pass_tiers")
+}
+
+// Mirror of backoffice's LuckyWheelSlot — one slice of the Lucky Wheel,
+// pointing at a real Item with a percentage chance. Weights are admin-entered
+// percentages (1-100) but spinWheel normalizes across whatever total is
+// actually configured rather than requiring them to sum to exactly 100. One
+// slot per item (@@unique).
+model LuckyWheelSlot {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  itemId    String   @unique @db.ObjectId
+  item      Item     @relation(fields: [itemId], references: [id])
+  // Float, not Int — admins need sub-1% odds (e.g. 0.1%) for rare items.
+  weight    Float    @default(1)
+  createdAt DateTime @default(now())
+
+  @@map("lucky_wheel_slots")
+}
+
+// A user's Lucky Wheel cooldown — a single row per user, overwritten on each
+// spin. Up to 4 spins per UTC calendar day (see spinWheel in
+// rewards/actions.ts and lib/daily-cycle.ts): the 1st is free, the rest cost
+// cc (see SPIN_COSTS in frontoffice's lib/lucky-wheel.ts).
+model UserWheelSpin {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String   @unique @db.ObjectId
+  user       User     @relation(fields: [userId], references: [id])
+  lastSpinAt DateTime
+  // How many spins used on lastSpinAt's UTC calendar day. Treated as 0 once
+  // `now` has crossed into a later UTC day than lastSpinAt, without a write —
+  // see the isNewDay check in spinWheel.
+  spinsToday Int      @default(0)
+
+  @@map("user_wheel_spins")
+}
+
+// Mirror of backoffice's DailyRewardDay — one rung of the Daily Reward
+// ladder, day 1-indexed and admin-assigned, pointing at a real Item (nullable
+// until the admin picks one for a freshly-added day). The ladder wraps:
+// claiming past the highest configured day loops back to day 1.
+model DailyRewardDay {
+  id     String  @id @default(auto()) @map("_id") @db.ObjectId
+  day    Int     @unique
+  itemId String? @db.ObjectId
+  item   Item?   @relation(fields: [itemId], references: [id])
+
+  @@map("daily_reward_days")
+}
+
+// A user's progress through the Daily Reward ladder. currentDay is the day
+// they'll claim next; lastClaimedAt gates re-claiming (must be a new UTC
+// calendar day) and detects a missed day — claiming on anything later than
+// the day right after lastClaimedAt resets currentDay back to 1 (see
+// claimDailyReward in rewards/actions.ts).
+model UserDailyReward {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId        String    @unique @db.ObjectId
+  user          User      @relation(fields: [userId], references: [id])
+  currentDay    Int       @default(1)
+  lastClaimedAt DateTime?
+
+  @@map("user_daily_rewards")
 }
 
 // Records that a user has unlocked a BattlePass's premium track. Kept
@@ -719,4 +1056,96 @@ model Note {
 
   @@index([targetUserId, createdAt])
   @@map("notes")
+}
+
+// A support ticket opened from the front office's "Contact an admin" flow —
+// the whole thing is a chat (see ContactMessage) rather than a single
+// message, so back-and-forth clarification happens in place. `type` starts
+// GENERAL and is only ever changed by an admin while responding (see back
+// office's setReportType) — it's what drives which extra action panel shows
+// on the report detail page (DEPOSIT_REQUEST -> "Add CC Coins"). Status gates
+// that same action: CC can only ever be credited while status is OPEN, never
+// through a direct economy edit (see addCcCoins).
+model ContactRequest {
+  id         String        @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String        @db.ObjectId
+  user       User          @relation("ContactRequestOwner", fields: [userId], references: [id])
+  subject    String
+  type       ContactType   @default(GENERAL)
+  status     ContactStatus @default(OPEN)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  closedAt   DateTime?
+  // Set only when this ticket was auto-opened by a shop cc-bundle purchase
+  // (see frontoffice's buyShopItem) rather than a freeform "Contact an admin"
+  // — drives the Approve/Reject purchase panel on the report detail page
+  // instead of the generic type-select + Add CC Coins panel.
+  shopItemId String?       @db.ObjectId
+  shopItem   ShopItem?     @relation(fields: [shopItemId], references: [id])
+
+  messages ContactMessage[]
+
+  @@index([status, updatedAt])
+  @@index([userId, updatedAt])
+  @@map("contact_requests")
+}
+
+// One chat message in a ContactRequest thread. isAdmin is set by which app's
+// action created it (frontoffice's sendContactMessage always false, back
+// office's replyToReport/addCcCoins always true) rather than checked from the
+// author's role, so a staff member who's also a player never gets misread as
+// "the admin" while posting as themselves elsewhere.
+model ContactMessage {
+  id               String         @id @default(auto()) @map("_id") @db.ObjectId
+  contactRequestId String         @db.ObjectId
+  contactRequest   ContactRequest @relation(fields: [contactRequestId], references: [id])
+  authorId         String         @db.ObjectId
+  author           User           @relation("ContactMessageAuthor", fields: [authorId], references: [id])
+  isAdmin          Boolean        @default(false)
+  body             String
+  // Set when the message is (or includes) an attached image — e.g. a buyer's
+  // proof-of-payment screenshot replying to a MONEY-priced purchase request.
+  // body can be empty ("") when the message is image-only.
+  imageUrl         String?
+  createdAt        DateTime       @default(now())
+
+  @@index([contactRequestId, createdAt])
+  @@map("contact_messages")
+}
+
+// Admin-managed "where to send money" list (e.g. name "D17", details
+// "22688314") — buyShopItem lists these in the auto-generated message on a
+// MONEY-priced purchase request, so the buyer knows where to pay before an
+// admin confirms receipt and approves. Managed from the back office.
+model PaymentMethod {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  details   String
+  createdAt DateTime @default(now())
+
+  @@map("payment_methods")
+}
+
+// Admin-controlled overrides for the navbar's items — see lib/nav-items.ts's
+// NAV_ITEMS/USER_MENU_ITEMS (the static defaults + keys) and resolveNavOrder
+// (how a row here overrides a key's enabled/order). A key with no row just
+// uses its static default; rows only exist once an admin changes something
+// from the back office, same "override, not full source of truth" pattern as
+// RankTier.
+model NavItemConfig {
+  id      String    @id @default(auto()) @map("_id") @db.ObjectId
+  key     String    @unique
+  enabled Boolean   @default(true)
+  order   Int
+  // Small red callout on the item's label in the navbar — null means no
+  // badge. Admin-set from the back office's /navigation, independent of
+  // enabled/order.
+  badge   NavBadge?
+
+  @@map("nav_item_configs")
+}
+
+enum NavBadge {
+  HOT
+  NEW
 }

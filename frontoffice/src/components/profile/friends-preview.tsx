@@ -2,7 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { Users } from "lucide-react";
 import { formatLastSeen, isRecentlyOnline } from "@/lib/format";
-import { getRank } from "@/lib/rank";
+import { getRank, type RankOverride } from "@/lib/rank";
 
 export type FriendPreviewData = {
   id: string;
@@ -16,10 +16,12 @@ export function FriendsPreview({
   friends,
   total,
   viewAllHref,
+  rankOverrides = [],
 }: {
   friends: FriendPreviewData[];
   total: number;
   viewAllHref?: string;
+  rankOverrides?: RankOverride[];
 }) {
   return (
     <div className="rounded-2xl border border-border bg-surface-raised p-5">
@@ -43,7 +45,7 @@ export function FriendsPreview({
         <ul className="mt-3 flex flex-col gap-1">
           {friends.map((friend) => {
             const online = isRecentlyOnline(friend.lastLoginAt);
-            const rank = getRank(friend.level);
+            const rank = getRank(friend.level, rankOverrides);
             const isChampion = rank.name === "Champion";
             return (
               <li key={friend.id}>

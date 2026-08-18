@@ -11,7 +11,7 @@ export function LoginForm() {
 
   return (
     <form action={formAction} className="flex flex-col gap-5">
-      <Field label="Email" name="email" type="email" autoComplete="email" placeholder="you@esportweb.tn" />
+      <Field label="Email" name="email" type="email" autoComplete="email" placeholder="you@clutcher.tn" />
       <Field
         label="Password"
         name="password"

@@ -17,14 +17,15 @@ export default async function ShopPage(props: PageProps<"/shop">) {
   const searchParams = await props.searchParams;
   const itemId = firstParam(searchParams.itemId);
 
-  const [items, games, selectedItem] = await Promise.all([
+  const [items, games, catalogItems, selectedItem] = await Promise.all([
     prisma.shopItem.findMany({
       orderBy: { createdAt: "desc" },
       include: { game: true },
     }),
     prisma.game.findMany({ orderBy: { name: "asc" } }),
+    prisma.item.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, status: true } }),
     itemId
-      ? prisma.shopItem.findUnique({ where: { id: itemId }, include: { game: true } })
+      ? prisma.shopItem.findUnique({ where: { id: itemId }, include: { game: true, grantsItem: true } })
       : Promise.resolve(null),
   ]);
 
@@ -33,7 +34,7 @@ export default async function ShopPage(props: PageProps<"/shop">) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex justify-end">
-        <AddShopItemModal games={gameOptions} />
+        <AddShopItemModal games={gameOptions} grantItems={catalogItems} />
       </div>
 
       {items.length === 0 ? (
@@ -67,6 +68,7 @@ export default async function ShopPage(props: PageProps<"/shop">) {
         <ShopItemDetailModal
           closeHref="/shop"
           games={gameOptions}
+          grantItems={catalogItems}
           item={{
             id: selectedItem.id,
             title: selectedItem.title,
@@ -78,6 +80,9 @@ export default async function ShopPage(props: PageProps<"/shop">) {
             stock: selectedItem.stock,
             gameId: selectedItem.gameId,
             gameName: selectedItem.game?.name ?? null,
+            grantsItemId: selectedItem.grantsItemId,
+            grantsItemName: selectedItem.grantsItem?.name ?? null,
+            needsConfirmation: selectedItem.needsConfirmation,
             imageUrl: selectedItem.imageUrl,
           }}
         />

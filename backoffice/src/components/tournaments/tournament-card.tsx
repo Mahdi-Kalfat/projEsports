@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { formatCompactCurrency } from "@/lib/format";
+import { formatCapacityLabel } from "@/lib/tournament-capacity";
 
 const STATUS_LABEL: Record<string, string> = {
   DRAFT: "Draft",
@@ -32,6 +33,7 @@ export type TournamentCardData = {
   prizePool: number;
   entryCost: number;
   registeredCount: number;
+  capacity: number | null;
   startAtLabel: string;
 };
 
@@ -95,7 +97,9 @@ export function TournamentCard({ tournament, href }: { tournament: TournamentCar
           </div>
           <div>
             <p className="text-xs text-muted">Registered</p>
-            <p className="font-semibold text-foreground">{tournament.registeredCount}</p>
+            <p className="font-semibold text-foreground">
+              {formatCapacityLabel(tournament.participationType, tournament.registeredCount, tournament.capacity)}
+            </p>
           </div>
         </div>
 

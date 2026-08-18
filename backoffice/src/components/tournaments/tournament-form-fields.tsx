@@ -15,6 +15,10 @@ export type TournamentFormDefaults = {
   prizePool: number;
   entryCost: number;
   participationType: string;
+  capacity: number | "";
+  maxTeamSize: number | "";
+  averageRankName: string;
+  region: string;
 };
 
 export function TournamentFormFields({
@@ -22,11 +26,13 @@ export function TournamentFormFields({
   defaults,
   currentBackgroundImageUrl,
   currentLogoImageUrl,
+  currentAverageRankImageUrl,
 }: {
   games: GameOption[];
   defaults?: TournamentFormDefaults;
   currentBackgroundImageUrl?: string | null;
   currentLogoImageUrl?: string | null;
+  currentAverageRankImageUrl?: string | null;
 }) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -67,6 +73,18 @@ export function TournamentFormFields({
         </select>
       </label>
 
+      <label className="text-xs text-muted">
+        Region
+        <input
+          type="text"
+          name="region"
+          maxLength={40}
+          placeholder="e.g. MENA, Europe"
+          defaultValue={defaults?.region}
+          className={FIELD_CLASS}
+        />
+      </label>
+
       <label className="text-xs text-muted sm:col-span-2">
         Description
         <textarea
@@ -100,7 +118,7 @@ export function TournamentFormFields({
         />
       </label>
 
-      <label className="text-xs text-muted sm:col-span-2">
+      <label className="text-xs text-muted">
         Who can join
         <select
           name="participationType"
@@ -110,6 +128,30 @@ export function TournamentFormFields({
           <option value="SOLO">Single player</option>
           <option value="TEAM">Teams only</option>
         </select>
+      </label>
+
+      <label className="text-xs text-muted">
+        Max players (solo) / max teams (team-only)
+        <input
+          type="number"
+          name="capacity"
+          min={0}
+          placeholder="Unlimited"
+          defaultValue={defaults?.capacity}
+          className={FIELD_CLASS}
+        />
+      </label>
+
+      <label className="text-xs text-muted">
+        Max players per team (team-only)
+        <input
+          type="number"
+          name="maxTeamSize"
+          min={1}
+          placeholder="Unlimited"
+          defaultValue={defaults?.maxTeamSize}
+          className={FIELD_CLASS}
+        />
       </label>
 
       <label className="text-xs text-muted sm:col-span-2">
@@ -164,6 +206,41 @@ export function TournamentFormFields({
         <input
           type="file"
           name="logoImage"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          className={FILE_FIELD_CLASS}
+        />
+      </label>
+
+      <label className="text-xs text-muted">
+        Average rank name
+        <input
+          type="text"
+          name="averageRankName"
+          maxLength={40}
+          placeholder="e.g. Gold Tier"
+          defaultValue={defaults?.averageRankName}
+          className={FIELD_CLASS}
+        />
+      </label>
+
+      <label className="text-xs text-muted">
+        Average rank image
+        {currentAverageRankImageUrl && (
+          <span className="mt-1 flex items-center gap-2">
+            <Image
+              src={currentAverageRankImageUrl}
+              alt=""
+              width={36}
+              height={36}
+              unoptimized
+              className="rounded object-contain"
+            />
+            <span className="text-xs text-muted">Current — pick a file to replace</span>
+          </span>
+        )}
+        <input
+          type="file"
+          name="averageRankImage"
           accept="image/png,image/jpeg,image/webp,image/gif"
           className={FILE_FIELD_CLASS}
         />

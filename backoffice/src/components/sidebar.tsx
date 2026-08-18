@@ -79,7 +79,7 @@ export function Sidebar({
         </nav>
 
         <div className="border-t border-border px-5 py-4 text-xs text-muted">
-          Esports Tournament Platform
+          Clutcher
         </div>
       </aside>
     </>

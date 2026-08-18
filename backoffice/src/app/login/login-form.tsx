@@ -16,7 +16,7 @@ export function LoginForm() {
         name="email"
         type="email"
         autoComplete="email"
-        placeholder="you@esportweb.tn"
+        placeholder="you@clutcher.tn"
       />
       <Field
         label="Password"

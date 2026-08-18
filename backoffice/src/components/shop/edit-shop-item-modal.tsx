@@ -4,7 +4,12 @@ import { useActionState, useEffect } from "react";
 import { useFormStatus } from "react-dom";
 import { X } from "lucide-react";
 import { updateShopItem, type CreateShopItemState } from "@/app/(app)/shop/actions";
-import { ShopItemFormFields, type GameOption, type ShopItemFormDefaults } from "./shop-item-form-fields";
+import {
+  ShopItemFormFields,
+  type GameOption,
+  type GrantItemOption,
+  type ShopItemFormDefaults,
+} from "./shop-item-form-fields";
 
 function SubmitButton() {
   const { pending } = useFormStatus();
@@ -24,12 +29,14 @@ const initialState: CreateShopItemState = {};
 export function EditShopItemModal({
   itemId,
   games,
+  grantItems,
   defaults,
   currentImageUrl,
   onClose,
 }: {
   itemId: string;
   games: GameOption[];
+  grantItems: GrantItemOption[];
   defaults: ShopItemFormDefaults;
   currentImageUrl: string | null;
   onClose: () => void;
@@ -70,7 +77,7 @@ export function EditShopItemModal({
         </div>
 
         <div className="mt-4">
-          <ShopItemFormFields games={games} defaults={defaults} currentImageUrl={currentImageUrl} />
+          <ShopItemFormFields games={games} grantItems={grantItems} defaults={defaults} currentImageUrl={currentImageUrl} />
         </div>
 
         {state.error && <p className="mt-3 text-xs text-primary-glow">{state.error}</p>}

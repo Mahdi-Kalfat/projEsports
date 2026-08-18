@@ -12,7 +12,7 @@ export function RegisterForm() {
   return (
     <form action={formAction} className="flex flex-col gap-5">
       <Field label="Username" name="username" type="text" autoComplete="username" placeholder="playerOne" />
-      <Field label="Email" name="email" type="email" autoComplete="email" placeholder="you@esportweb.tn" />
+      <Field label="Email" name="email" type="email" autoComplete="email" placeholder="you@clutcher.tn" />
       <div className="grid grid-cols-2 gap-3">
         <Field
           label="Password"

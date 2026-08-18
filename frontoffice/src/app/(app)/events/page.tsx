@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { CalendarDays } from "lucide-react";
@@ -7,7 +8,7 @@ import { Reveal } from "@/components/ui/reveal";
 import { PageHeader } from "@/components/ui/page-header";
 
 export const metadata: Metadata = {
-  title: "Events — Esports Tournament Platform",
+  title: "Events — Clutcher",
 };
 
 function formatDateTime(date: Date) {
@@ -16,13 +17,18 @@ function formatDateTime(date: Date) {
 
 export default async function EventsPage() {
   const session = await auth();
-  const userId = session!.user.id;
+  if (!session?.user) redirect("/login");
+  const userId = session.user.id;
 
   const [events, myAttendances] = await Promise.all([
     prisma.event.findMany({
       where: { status: { not: "DRAFT" } },
       orderBy: { startAt: "asc" },
-      include: { game: true, _count: { select: { attendees: true } } },
+      include: {
+        game: true,
+        _count: { select: { attendees: true } },
+        attendees: { take: 5, include: { user: { select: { username: true, avatarUrl: true } } } },
+      },
     }),
     prisma.eventAttendee.findMany({ where: { userId }, select: { eventId: true } }),
   ]);
@@ -60,6 +66,10 @@ export default async function EventsPage() {
                   backgroundImageUrl: event.backgroundImageUrl,
                   logoImageUrl: event.logoImageUrl,
                   attendingCount: event._count.attendees,
+                  attendeePreview: event.attendees.map((a) => ({
+                    username: a.user.username,
+                    avatarUrl: a.user.avatarUrl,
+                  })),
                   startAtLabel: formatDateTime(event.startAt),
                   isAttending: attendingIds.has(event.id),
                 }}

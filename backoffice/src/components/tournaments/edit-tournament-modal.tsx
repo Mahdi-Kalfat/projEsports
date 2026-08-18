@@ -31,6 +31,7 @@ export function EditTournamentModal({
   defaults,
   currentBackgroundImageUrl,
   currentLogoImageUrl,
+  currentAverageRankImageUrl,
   onClose,
 }: {
   tournamentId: string;
@@ -38,6 +39,7 @@ export function EditTournamentModal({
   defaults: TournamentFormDefaults;
   currentBackgroundImageUrl: string | null;
   currentLogoImageUrl: string | null;
+  currentAverageRankImageUrl: string | null;
   onClose: () => void;
 }) {
   const boundAction = updateTournament.bind(null, tournamentId);
@@ -81,6 +83,7 @@ export function EditTournamentModal({
             defaults={defaults}
             currentBackgroundImageUrl={currentBackgroundImageUrl}
             currentLogoImageUrl={currentLogoImageUrl}
+            currentAverageRankImageUrl={currentAverageRankImageUrl}
           />
         </div>
 

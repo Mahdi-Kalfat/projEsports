@@ -4,6 +4,7 @@ import { buildTournamentsHref } from "@/lib/tournaments-query";
 import { AddTournamentModal } from "@/components/tournaments/add-tournament-modal";
 import { TournamentCard } from "@/components/tournaments/tournament-card";
 import { TournamentDetailModal } from "@/components/tournaments/tournament-detail-modal";
+import { registeredCount } from "@/lib/tournament-capacity";
 
 export const metadata: Metadata = {
   title: "Tournaments — Back Office",
@@ -26,10 +27,10 @@ export default async function TournamentsPage(props: PageProps<"/tournaments">) 
   const searchParams = await props.searchParams;
   const tournamentId = firstParam(searchParams.tournamentId);
 
-  const [tournaments, games, selectedTournament, participants] = await Promise.all([
+  const [tournaments, games, selectedTournament, participants, pendingRegistrations] = await Promise.all([
     prisma.tournament.findMany({
       orderBy: { startAt: "desc" },
-      include: { game: true, _count: { select: { participants: true } } },
+      include: { game: true, participants: { select: { teamName: true } } },
     }),
     prisma.game.findMany({ orderBy: { name: "asc" } }),
     tournamentId
@@ -40,6 +41,13 @@ export default async function TournamentsPage(props: PageProps<"/tournaments">) 
           where: { tournamentId },
           include: { user: { select: { username: true } } },
           orderBy: { joinedAt: "asc" },
+        })
+      : Promise.resolve([]),
+    tournamentId
+      ? prisma.tournamentRegistration.findMany({
+          where: { tournamentId, status: "PENDING" },
+          include: { members: { include: { user: { select: { username: true } } } } },
+          orderBy: { createdAt: "asc" },
         })
       : Promise.resolve([]),
   ]);
@@ -73,7 +81,8 @@ export default async function TournamentsPage(props: PageProps<"/tournaments">) 
                 logoImageUrl: tournament.logoImageUrl,
                 prizePool: tournament.prizePool,
                 entryCost: tournament.entryCost,
-                registeredCount: tournament._count.participants,
+                registeredCount: registeredCount(tournament.participationType, tournament.participants),
+                capacity: tournament.capacity,
                 startAtLabel: formatDateTime(tournament.startAt),
               }}
             />
@@ -98,6 +107,11 @@ export default async function TournamentsPage(props: PageProps<"/tournaments">) 
             participationType: selectedTournament.participationType,
             backgroundImageUrl: selectedTournament.backgroundImageUrl,
             logoImageUrl: selectedTournament.logoImageUrl,
+            capacity: selectedTournament.capacity,
+            maxTeamSize: selectedTournament.maxTeamSize,
+            averageRankName: selectedTournament.averageRankName,
+            averageRankImageUrl: selectedTournament.averageRankImageUrl,
+            region: selectedTournament.region,
             startAtLabel: formatDateTime(selectedTournament.startAt),
             startAtLocal: toDatetimeLocalValue(selectedTournament.startAt),
           }}
@@ -106,6 +120,16 @@ export default async function TournamentsPage(props: PageProps<"/tournaments">) 
             username: participant.user.username,
             teamName: participant.teamName,
             joinedLabel: formatDateTime(participant.joinedAt),
+          }))}
+          pendingRegistrations={pendingRegistrations.map((registration) => ({
+            id: registration.id,
+            teamName: registration.teamName,
+            teamTag: registration.teamTag,
+            teamLogoUrl: registration.teamLogoUrl,
+            members: registration.members.map((member) => ({
+              id: member.id,
+              username: member.user.username,
+            })),
           }))}
         />
       )}

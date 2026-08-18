@@ -14,7 +14,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Esports Tournament Platform",
+  title: "Clutcher",
   description: "Compete, connect, and climb the ranks.",
 };
 

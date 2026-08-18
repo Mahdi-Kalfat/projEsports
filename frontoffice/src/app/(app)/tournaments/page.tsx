@@ -3,11 +3,13 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { Trophy } from "lucide-react";
 import { TournamentCard } from "@/components/tournaments/tournament-card";
+import { registeredCount } from "@/lib/tournament-capacity";
 import { Reveal } from "@/components/ui/reveal";
 import { PageHeader } from "@/components/ui/page-header";
+import { GuestBanner } from "@/components/ui/guest-banner";
 
 export const metadata: Metadata = {
-  title: "Tournaments — Esports Tournament Platform",
+  title: "Tournaments — Clutcher",
 };
 
 function formatDateTime(date: Date) {
@@ -16,18 +18,20 @@ function formatDateTime(date: Date) {
 
 export default async function TournamentsPage() {
   const session = await auth();
-  const userId = session!.user.id;
+  const userId = session?.user?.id;
 
   const [tournaments, myParticipations] = await Promise.all([
     prisma.tournament.findMany({
       where: { status: { not: "DRAFT" } },
       orderBy: { startAt: "asc" },
-      include: { game: true, _count: { select: { participants: true } } },
+      include: { game: true, participants: { select: { teamName: true } } },
     }),
-    prisma.tournamentParticipant.findMany({
-      where: { userId },
-      select: { tournamentId: true },
-    }),
+    userId
+      ? prisma.tournamentParticipant.findMany({
+          where: { userId },
+          select: { tournamentId: true },
+        })
+      : Promise.resolve([]),
   ]);
 
   const joinedIds = new Set(myParticipations.map((p) => p.tournamentId));
@@ -40,6 +44,10 @@ export default async function TournamentsPage() {
         accentWord="fight"
         subtitle="Browse open brackets, register solo or with your squad, and climb the leaderboard."
       />
+
+      {!userId && (
+        <GuestBanner message="Create a free account to register for tournaments and track your matches." />
+      )}
 
       {tournaments.length === 0 ? (
         <div className="flex min-h-[40vh] flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-surface-raised text-center text-sm text-muted">
@@ -63,7 +71,11 @@ export default async function TournamentsPage() {
                   prizePool: tournament.prizePool,
                   entryType: tournament.entryType,
                   entryCost: tournament.entryCost,
-                  registeredCount: tournament._count.participants,
+                  registeredCount: registeredCount(tournament.participationType, tournament.participants),
+                  capacity: tournament.capacity,
+                  averageRankName: tournament.averageRankName,
+                  averageRankImageUrl: tournament.averageRankImageUrl,
+                  region: tournament.region,
                   startAtLabel: formatDateTime(tournament.startAt),
                   isJoined: joinedIds.has(tournament.id),
                 }}

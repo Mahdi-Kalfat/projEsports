@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireBackofficeSession } from "@/lib/require-session";
 import { logUserAction } from "@/lib/audit-log";
 import { userEconomySchema } from "@/lib/validation/user-economy";
+import { grantItemSchema } from "@/lib/validation/item";
 import { normalizeLevelXp } from "@/lib/level-xp";
 import { durationToMs, RESTRICTION_LOG_LABELS, type RestrictionKind } from "@/lib/restrictions";
 import { Role, SubRole } from "@/generated/prisma";
@@ -14,7 +15,9 @@ const ASSIGNABLE_SUB_ROLES: string[] = [SubRole.TRUSTED, SubRole.COMMENTOR];
 
 // Guards against acting on your own account or on an OWNER account — the
 // latter protects the top-level role from being locked out by a moderator/admin.
-async function guardedTarget(userId: string, sessionUserId: string) {
+// Exported for reuse by other admin-on-user actions (e.g. reports/actions.ts's
+// addCcCoins) that need the same protection.
+export async function guardedTarget(userId: string, sessionUserId: string) {
   const target = await prisma.user.findUnique({ where: { id: userId } });
   if (!target || target.id === sessionUserId || target.role === "OWNER") {
     return null;
@@ -224,6 +227,53 @@ export async function updateEconomy(
     actorUsername: session!.user.username,
     action: "Updated economy",
     details: `Points ${target.points} → ${parsed.data.points}, Level ${target.level} → ${level}, XP ${target.xp} → ${xp}`,
+  });
+  revalidatePath("/users");
+  return { success: true };
+}
+
+export type GrantItemState = { error?: string; success?: boolean };
+
+// Grants stack: granting an item a user already holds increments quantity
+// rather than creating a duplicate UserItem row (see the model comment in
+// schema.prisma). This is the only way an item currently reaches an
+// inventory — there's no purchase/reward flow yet.
+export async function grantItem(
+  userId: string,
+  _prevState: GrantItemState,
+  formData: FormData,
+): Promise<GrantItemState> {
+  const session = await requireBackofficeSession();
+  const target = await guardedTarget(userId, session!.user.id);
+  if (!target) {
+    return { error: "You can't edit this account." };
+  }
+
+  const parsed = grantItemSchema.safeParse({
+    itemId: formData.get("itemId"),
+    quantity: formData.get("quantity"),
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Pick an item and a valid quantity." };
+  }
+
+  const item = await prisma.item.findUnique({ where: { id: parsed.data.itemId } });
+  if (!item || item.status !== "ACTIVE") {
+    return { error: "Pick an active item." };
+  }
+
+  await prisma.userItem.upsert({
+    where: { userId_itemId: { userId, itemId: item.id } },
+    create: { userId, itemId: item.id, quantity: parsed.data.quantity },
+    update: { quantity: { increment: parsed.data.quantity } },
+  });
+
+  await logUserAction({
+    targetUserId: userId,
+    actorId: session!.user.id,
+    actorUsername: session!.user.username,
+    action: "Granted item",
+    details: `${parsed.data.quantity}x ${item.name}`,
   });
   revalidatePath("/users");
   return { success: true };

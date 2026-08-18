@@ -35,5 +35,5 @@ export const config = {
   // them directly, and proxies through them — see frontoffice/next.config.ts).
   // Gating them behind backoffice auth made that proxy silently redirect to
   // backoffice's /login and leak its Set-Cookie back to the front office's origin.
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|uploads).*)"],
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|uploads|proof-uploads).*)"],
 };

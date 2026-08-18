@@ -18,6 +18,7 @@ export const metadata: Metadata = {
 const PAGE_SIZE = 20;
 const LOG_LIMIT = 50;
 const NOTE_LIMIT = 100;
+const GRANTED_ITEM_LIMIT = 50;
 
 const LEVEL_MIN = 1;
 const LEVEL_MAX = 100;
@@ -44,6 +45,7 @@ const USER_SUMMARY_SELECT = {
   shopBlocked: true,
   shopBlockedUntil: true,
   points: true,
+  ccCoins: true,
   level: true,
   xp: true,
   createdAt: true,
@@ -128,7 +130,7 @@ export default async function UsersPage(props: PageProps<"/users">) {
     pointsMax: isPointsFiltered ? pointsMax : undefined,
   };
 
-  const [users, total, session, selectedUser, auditLogs, notes] = await Promise.all([
+  const [users, total, session, selectedUser, auditLogs, notes, activeItems, grantedItems] = await Promise.all([
     prisma.user.findMany({
       where,
       orderBy: { createdAt: "desc" },
@@ -153,6 +155,21 @@ export default async function UsersPage(props: PageProps<"/users">) {
           where: { targetUserId: userIdParam },
           orderBy: { createdAt: "desc" },
           take: NOTE_LIMIT,
+        })
+      : Promise.resolve(null),
+    userIdParam
+      ? prisma.item.findMany({
+          where: { status: "ACTIVE" },
+          orderBy: { name: "asc" },
+          select: { id: true, name: true, effectType: true, effectValue: true },
+        })
+      : Promise.resolve(null),
+    userIdParam
+      ? prisma.userItem.findMany({
+          where: { userId: userIdParam },
+          include: { item: true },
+          orderBy: { acquiredAt: "desc" },
+          take: GRANTED_ITEM_LIMIT,
         })
       : Promise.resolve(null),
   ]);
@@ -193,6 +210,14 @@ export default async function UsersPage(props: PageProps<"/users">) {
     body: note.body,
     authorUsername: note.authorUsername,
     whenLabel: formatDateTime(note.createdAt),
+  }));
+
+  const grantedItemEntries = grantedItems?.map((entry) => ({
+    id: entry.id,
+    name: entry.item.name,
+    effectType: entry.item.effectType,
+    effectValue: entry.item.effectValue,
+    quantity: entry.quantity,
   }));
 
   return (
@@ -360,6 +385,8 @@ export default async function UsersPage(props: PageProps<"/users">) {
           notesHref={buildUsersHref({ q, page, userId: selectedUserView.id, notes: true, ...activeFilters })}
           notesCloseHref={buildUsersHref({ q, page, userId: selectedUserView.id, ...activeFilters })}
           notes={showNotes ? noteEntries ?? [] : null}
+          items={activeItems ?? []}
+          grantedItems={grantedItemEntries ?? []}
         />
       )}
     </div>

@@ -1,0 +1,256 @@
+// Points at the SAME MongoDB database as frontoffice/backoffice (see their
+// DATABASE_URL and this app's .env.example). Only declares the two
+// collections the bot actually touches, not the full app schema — Mongo has
+// no real schema to keep in sync across services, and Prisma just needs to
+// describe what a given client reads/writes. Keep discordId/discordUsername/
+// discordLinkedAt in sync with frontoffice/prisma/schema.prisma's User model
+// if you rename or remove any of them there.
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// discordId is intentionally not @unique — see frontoffice's schema comment
+// on the same field (MongoDB has no sparse/partial unique support in
+// Prisma, and nearly every row lacks discordId). One-account-per-Discord-user
+// is enforced in commands/link.ts instead, via a findFirst check.
+model User {
+  id                      String    @id @default(auto()) @map("_id") @db.ObjectId
+  username                String    @unique
+  avatarUrl               String?
+  bannerImageUrl          String?
+  // frontoffice declares this as a ProfileTheme enum — read here as a plain
+  // string since Mongo itself stores just the string value either way, and
+  // this schema only reads it (see lib/profile-theme.ts's color lookup).
+  profileTheme            String    @default("CRIMSON")
+  level                   Int       @default(1)
+  xp                      Int       @default(0)
+  points                  Int       @default(0)
+  ccCoins                 Int       @default(0)
+  createdAt               DateTime  @default(now())
+  discordId               String?
+  discordUsername         String?
+  discordGlobalName       String?
+  discordAvatarUrl        String?
+  discordLinkedAt         DateTime?
+  // Written by activity-tracking.ts, gated on activityTrackingEnabled being
+  // true — see frontoffice's schema comment on the same fields for the
+  // session-tracking model.
+  activityTrackingEnabled Boolean   @default(false)
+  currentGame             String?
+  currentGameStartedAt    DateTime?
+
+  @@index([discordId])
+  @@map("users")
+}
+
+// Mirrors frontoffice/prisma/schema.prisma's GameActivity exactly — see its
+// comment for why userId has no real Prisma relation. Written by
+// activity-tracking.ts's flushSession.
+model GameActivity {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId       String   @db.ObjectId
+  gameName     String
+  totalSeconds Int      @default(0)
+  lastPlayedAt DateTime @default(now())
+
+  @@unique([userId, gameName])
+  @@index([userId])
+  @@map("game_activities")
+}
+
+// Read-only mirrors for /profile's rank/XP display — see
+// frontoffice/src/lib/level-xp.ts and lib/rank.ts, which this bot's
+// src/lib/level-xp.ts and src/lib/rank.ts copy the pure calculation
+// functions from verbatim (same three-way mirror already used between
+// frontoffice/backoffice for this exact pair of files).
+model LevelXpRule {
+  id         String @id @default(auto()) @map("_id") @db.ObjectId
+  tier       Int    @unique
+  xpPerLevel Int
+
+  @@map("level_xp_rules")
+}
+
+model RankTier {
+  id       String  @id @default(auto()) @map("_id") @db.ObjectId
+  tier     Int     @unique
+  name     String?
+  imageUrl String?
+
+  @@map("rank_tiers")
+}
+
+// Mirrors frontoffice/prisma/schema.prisma's DiscordLinkCode exactly — see
+// its comment for why userId has no real Prisma relation.
+model DiscordLinkCode {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  code      String   @unique
+  userId    String   @unique @db.ObjectId
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("discord_link_codes")
+}
+
+// Read-only mirrors for the tournament/event announcement poller (see
+// src/lib/announcements.ts) — status/entryType/type are read as plain
+// strings rather than redeclaring frontoffice's enums, same tradeoff as
+// User.profileTheme above.
+model Game {
+  id   String @id @default(auto()) @map("_id") @db.ObjectId
+  name String
+
+  tournaments Tournament[]
+  events      Event[]
+
+  @@map("games")
+}
+
+model Tournament {
+  id                 String   @id @default(auto()) @map("_id") @db.ObjectId
+  title              String
+  status             String
+  entryType          String
+  entryCost          Int
+  prizePool          Int
+  region             String?
+  capacity           Int?
+  backgroundImageUrl String?
+  logoImageUrl       String?
+  startAt            DateTime
+  gameId             String   @db.ObjectId
+  game               Game     @relation(fields: [gameId], references: [id])
+
+  @@map("tournaments")
+}
+
+model Event {
+  id                 String   @id @default(auto()) @map("_id") @db.ObjectId
+  title              String
+  type               String
+  status             String
+  location           String?
+  backgroundImageUrl String?
+  logoImageUrl       String?
+  startAt            DateTime
+  gameId             String?  @db.ObjectId
+  game               Game?    @relation(fields: [gameId], references: [id])
+
+  @@map("events")
+}
+
+// Read-only mirror for /daily and /spin's reward name display — see
+// frontoffice/prisma/schema.prisma's Item model comment. Effect fields
+// (effectType/effectValue) aren't declared here: neither command applies an
+// item's effect, only frontoffice/backoffice claiming/spinning already
+// only *grants* the raw item into inventory — a player still has to "Use"
+// it from the site to actually get the XP/points/cc it describes.
+model Item {
+  id   String @id @default(auto()) @map("_id") @db.ObjectId
+  name String
+
+  dailyRewardDays DailyRewardDay[]
+  wheelSlot       LuckyWheelSlot?
+
+  @@map("items")
+}
+
+// Mirrors frontoffice/prisma/schema.prisma's DailyRewardDay exactly.
+model DailyRewardDay {
+  id     String  @id @default(auto()) @map("_id") @db.ObjectId
+  day    Int     @unique
+  itemId String? @db.ObjectId
+  item   Item?   @relation(fields: [itemId], references: [id])
+
+  @@map("daily_reward_days")
+}
+
+// Mirrors frontoffice/prisma/schema.prisma's UserDailyReward exactly — see
+// DiscordLinkCode's comment for why userId has no real Prisma relation.
+// Written by commands/daily.ts, using the exact same claim logic as
+// frontoffice's rewards/actions.ts:claimDailyReward.
+model UserDailyReward {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId        String    @unique @db.ObjectId
+  currentDay    Int       @default(1)
+  lastClaimedAt DateTime?
+
+  @@map("user_daily_rewards")
+}
+
+// Mirrors frontoffice/prisma/schema.prisma's LuckyWheelSlot exactly.
+model LuckyWheelSlot {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  itemId    String   @unique @db.ObjectId
+  item      Item     @relation(fields: [itemId], references: [id])
+  weight    Float    @default(1)
+  createdAt DateTime @default(now())
+
+  @@map("lucky_wheel_slots")
+}
+
+// Mirrors frontoffice/prisma/schema.prisma's UserWheelSpin exactly — see
+// DiscordLinkCode's comment for why userId has no real Prisma relation.
+// Written by commands/spin.ts, using the exact same spin logic as
+// frontoffice's rewards/actions.ts:spinWheel.
+model UserWheelSpin {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String   @unique @db.ObjectId
+  lastSpinAt DateTime
+  spinsToday Int      @default(0)
+
+  @@map("user_wheel_spins")
+}
+
+// Mirrors frontoffice/prisma/schema.prisma's UserItem exactly — see
+// DiscordLinkCode's comment for why userId/itemId have no real Prisma
+// relations. /daily and /spin both grant into this the same way the site's
+// own claim/spin actions do — the item's effect (if any) still isn't
+// applied until the player "Use"s it from their inventory on the site.
+model UserItem {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String   @db.ObjectId
+  itemId     String   @db.ObjectId
+  quantity   Int      @default(1)
+  acquiredAt DateTime @default(now())
+
+  @@unique([userId, itemId])
+  @@map("user_items")
+}
+
+// Read-only mirror for the announcement poller — see Tournament/Event above
+// for the same pattern. No image fields to mirror here: unlike
+// Tournament/Event, BattlePass has none on the real model either.
+model BattlePass {
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  title             String
+  description       String?
+  status            String
+  premiumPointsCost Int
+  startAt           DateTime
+  endAt             DateTime
+
+  @@map("battle_passes")
+}
+
+// Bot-owned bookkeeping — NOT part of frontoffice/backoffice's schema, so
+// this collection is free to evolve without touching either app. Records
+// which (kind, refId, status) combinations have already been posted to the
+// announcements channel, so re-polling the same tournament/event/battle
+// pass never double-posts. See announcements.ts.
+model Announcement {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  kind        String
+  refId       String   @db.ObjectId
+  status      String
+  announcedAt DateTime @default(now())
+
+  @@unique([kind, refId, status])
+  @@map("bot_announcements")
+}

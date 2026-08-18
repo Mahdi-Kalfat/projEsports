@@ -28,7 +28,7 @@ export default async function LoginPage() {
       <div className="relative z-10 w-full max-w-sm">
         <div className="mb-8 text-center">
           <p className="font-display text-xs font-semibold uppercase tracking-[0.3em] text-accent">
-            Esports Tournament Platform
+            Clutcher
           </p>
           <h1 className="mt-3 font-display text-2xl font-bold uppercase tracking-wide text-foreground">
             Back <span className="neon-text">Office</span>

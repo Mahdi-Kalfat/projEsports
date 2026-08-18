@@ -9,6 +9,8 @@ import { Pencil, Trash2, Users, X } from "lucide-react";
 import { deleteTournament, setTournamentStatus } from "@/app/(app)/tournaments/actions";
 import { EditTournamentModal } from "./edit-tournament-modal";
 import type { GameOption, TournamentFormDefaults } from "./tournament-form-fields";
+import { registeredCount, formatCapacityLabel } from "@/lib/tournament-capacity";
+import { PendingRegistrationRow, type PendingRegistrationData } from "./pending-registration-row";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "DRAFT", label: "Draft" },
@@ -122,6 +124,11 @@ export type TournamentDetail = {
   participationType: string;
   backgroundImageUrl: string | null;
   logoImageUrl: string | null;
+  capacity: number | null;
+  maxTeamSize: number | null;
+  averageRankName: string | null;
+  averageRankImageUrl: string | null;
+  region: string | null;
   startAtLabel: string;
   startAtLocal: string;
 };
@@ -130,11 +137,13 @@ export function TournamentDetailModal({
   tournament,
   games,
   participants,
+  pendingRegistrations,
   closeHref,
 }: {
   tournament: TournamentDetail;
   games: GameOption[];
   participants: ParticipantEntry[];
+  pendingRegistrations: PendingRegistrationData[];
   closeHref: string;
 }) {
   const router = useRouter();
@@ -165,6 +174,10 @@ export function TournamentDetailModal({
     prizePool: tournament.prizePool,
     entryCost: tournament.entryCost,
     participationType: tournament.participationType,
+    capacity: tournament.capacity ?? "",
+    maxTeamSize: tournament.maxTeamSize ?? "",
+    averageRankName: tournament.averageRankName ?? "",
+    region: tournament.region ?? "",
   };
 
   return (
@@ -211,7 +224,35 @@ export function TournamentDetailModal({
             label="Entry price"
             value={tournament.entryCost > 0 ? `${tournament.entryCost.toLocaleString("en-US")} DT` : "Free"}
           />
+          <InfoField
+            label={tournament.participationType === "TEAM" ? "Max teams" : "Max players"}
+            value={tournament.capacity !== null ? String(tournament.capacity) : "Unlimited"}
+          />
+          {tournament.participationType === "TEAM" && (
+            <InfoField
+              label="Max players per team"
+              value={tournament.maxTeamSize !== null ? String(tournament.maxTeamSize) : "Unlimited"}
+            />
+          )}
+          {tournament.region && <InfoField label="Region" value={tournament.region} />}
         </dl>
+
+        {tournament.averageRankName && (
+          <div className="mt-3 flex items-center gap-2 text-sm">
+            <span className="text-xs text-muted">Average rank:</span>
+            {tournament.averageRankImageUrl && (
+              <Image
+                src={tournament.averageRankImageUrl}
+                alt=""
+                width={20}
+                height={20}
+                unoptimized
+                className="object-contain"
+              />
+            )}
+            <span className="font-medium text-foreground">{tournament.averageRankName}</span>
+          </div>
+        )}
 
         {tournament.description && (
           <p className="mt-3 text-sm text-muted">{tournament.description}</p>
@@ -227,10 +268,28 @@ export function TournamentDetailModal({
           <StatusSelect tournamentId={tournament.id} status={tournament.status} />
         </div>
 
+        {pendingRegistrations.length > 0 && (
+          <div className="mt-5 border-t border-border pt-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted">
+              Pending team registrations ({pendingRegistrations.length})
+            </p>
+            <ul className="mt-2 flex max-h-56 flex-col gap-2 overflow-y-auto">
+              {pendingRegistrations.map((registration) => (
+                <PendingRegistrationRow key={registration.id} registration={registration} />
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div className="mt-5 border-t border-border pt-4">
           <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted">
             <Users size={14} />
-            Participants ({participants.length})
+            Registered:{" "}
+            {formatCapacityLabel(
+              tournament.participationType,
+              registeredCount(tournament.participationType, participants),
+              tournament.capacity,
+            )}
           </div>
           <div className="mt-2 max-h-48 overflow-y-auto">
             {participants.length === 0 ? (
@@ -283,6 +342,7 @@ export function TournamentDetailModal({
           defaults={editDefaults}
           currentBackgroundImageUrl={tournament.backgroundImageUrl}
           currentLogoImageUrl={tournament.logoImageUrl}
+          currentAverageRankImageUrl={tournament.averageRankImageUrl}
           onClose={() => setEditing(false)}
         />
       )}

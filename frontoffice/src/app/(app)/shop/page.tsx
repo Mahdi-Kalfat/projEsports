@@ -1,19 +1,44 @@
 import type { Metadata } from "next";
-import { ShoppingBag } from "lucide-react";
+import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import { ShopItemCard } from "@/components/shop/shop-item-card";
-import { Reveal } from "@/components/ui/reveal";
+import { ShopGrid } from "@/components/shop/shop-grid";
+import { ShopBalance } from "@/components/shop/shop-balance";
 import { PageHeader } from "@/components/ui/page-header";
+import { GuestBanner } from "@/components/ui/guest-banner";
 
 export const metadata: Metadata = {
-  title: "Shop — Esports Tournament Platform",
+  title: "Shop — Clutcher",
+};
+
+// Puts the cc bundles first, then the cc-to-points listings, then boosts —
+// everything else (no grantsItem, or an effect type outside this map) sorts
+// last, in whatever order it was fetched.
+const GROUP_ORDER: Record<string, number> = {
+  CC_GRANT: 0,
+  POINTS_GRANT: 1,
+  XP_BOOST: 2,
+  POINTS_BOOST: 3,
 };
 
 export default async function ShopPage() {
-  const items = await prisma.shopItem.findMany({
-    where: { status: "ACTIVE" },
-    orderBy: { createdAt: "desc" },
-    include: { game: true },
+  const session = await auth();
+  const userId = session?.user?.id;
+
+  const [items, user] = await Promise.all([
+    prisma.shopItem.findMany({
+      where: { status: "ACTIVE" },
+      orderBy: { createdAt: "desc" },
+      include: { game: true, grantsItem: { select: { effectType: true } } },
+    }),
+    userId
+      ? prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { ccCoins: true, points: true } })
+      : null,
+  ]);
+
+  const sortedItems = [...items].sort((a, b) => {
+    const rankA = GROUP_ORDER[a.grantsItem?.effectType ?? ""] ?? 99;
+    const rankB = GROUP_ORDER[b.grantsItem?.effectType ?? ""] ?? 99;
+    return rankA - rankB;
   });
 
   return (
@@ -22,35 +47,28 @@ export default async function ShopPage() {
         eyebrow="Gear up"
         title="The"
         accentWord="Shop"
-        subtitle="Redeem points for avatars, badges, and boosts. Purchases are coming in a future update."
+        subtitle="Buy cc, points, and boosts — some are instant, others need an admin's confirmation."
+        action={user ? <ShopBalance ccCoins={user.ccCoins} points={user.points} /> : undefined}
       />
 
-      {items.length === 0 ? (
-        <div className="flex min-h-[40vh] flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-surface-raised text-center text-sm text-muted">
-          <ShoppingBag size={28} className="text-muted/50" />
-          The shop is empty right now — check back soon.
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          {items.map((item, i) => (
-            <Reveal key={item.id} delay={Math.min(i * 0.05, 0.3)}>
-              <ShopItemCard
-                item={{
-                  id: item.id,
-                  title: item.title,
-                  description: item.description,
-                  category: item.category,
-                  priceType: item.priceType,
-                  price: item.price,
-                  stock: item.stock,
-                  gameName: item.game?.name ?? null,
-                  imageUrl: item.imageUrl,
-                }}
-              />
-            </Reveal>
-          ))}
-        </div>
-      )}
+      {!user && <GuestBanner message="Create a free account to buy cc, points, and boosts." />}
+
+      <ShopGrid
+        isGuest={!user}
+        items={sortedItems.map((item) => ({
+          id: item.id,
+          title: item.title,
+          description: item.description,
+          category: item.category,
+          priceType: item.priceType,
+          price: item.price,
+          stock: item.stock,
+          gameName: item.game?.name ?? null,
+          purchasable: item.grantsItemId !== null,
+          imageUrl: item.imageUrl,
+          grantsItemEffectType: item.grantsItem?.effectType ?? null,
+        }))}
+      />
     </div>
   );
 }

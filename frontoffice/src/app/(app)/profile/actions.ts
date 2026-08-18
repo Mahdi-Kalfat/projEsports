@@ -6,6 +6,7 @@ import { requireFrontOfficeSession } from "@/lib/require-session";
 import { saveUploadedImage } from "@/lib/uploads";
 import { profileSchema } from "@/lib/validation/profile";
 import { PROFILE_THEME_KEYS } from "@/lib/profile-theme";
+import { createDiscordLinkCode } from "@/lib/discord-link-code";
 import type { ProfileTheme } from "@/generated/prisma";
 
 export type UpdateProfileState = { error?: string; success?: boolean };
@@ -66,4 +67,35 @@ export async function updateProfile(
   revalidatePath(`/profile/${session!.user.username}`);
   revalidatePath(`/inventory/${session!.user.username}`);
   return { success: true };
+}
+
+export type DiscordLinkCodeState = { code: string; expiresAt: string } | { error: string };
+
+// Issues a fresh code for the Discord bot's /link command to redeem (see
+// discord-bot/src/commands/link.ts) — doesn't touch discordId itself, only
+// the bot does that once the code comes back through Discord.
+export async function generateDiscordLinkCode(): Promise<DiscordLinkCodeState> {
+  const session = await requireFrontOfficeSession();
+  try {
+    const linkCode = await createDiscordLinkCode(session!.user.id);
+    return { code: linkCode.code, expiresAt: linkCode.expiresAt.toISOString() };
+  } catch {
+    return { error: "Could not generate a code. Try again." };
+  }
+}
+
+export async function unlinkDiscord(): Promise<{ error?: string }> {
+  const session = await requireFrontOfficeSession();
+  await prisma.user.update({
+    where: { id: session!.user.id },
+    data: {
+      discordId: null,
+      discordUsername: null,
+      discordGlobalName: null,
+      discordAvatarUrl: null,
+      discordLinkedAt: null,
+    },
+  });
+  revalidatePath(`/profile/${session!.user.username}`);
+  return {};
 }

@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
 import Image from "next/image";
-import Link from "next/link";
-import { notFound } from "next/navigation";
-import { ArrowLeft, Users } from "lucide-react";
+import { notFound, redirect } from "next/navigation";
+import { Users } from "lucide-react";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { Reveal } from "@/components/ui/reveal";
 import { RsvpButton } from "@/components/events/rsvp-button";
 import { TYPE_LABEL } from "@/components/events/event-card";
+import { BackLink } from "@/components/ui/back-link";
 
 export async function generateMetadata(props: PageProps<"/events/[id]">): Promise<Metadata> {
   const { id } = await props.params;
@@ -49,7 +49,8 @@ function InfoField({ label, value }: { label: string; value: string }) {
 export default async function EventDetailPage(props: PageProps<"/events/[id]">) {
   const { id } = await props.params;
   const session = await auth();
-  const userId = session!.user.id;
+  if (!session?.user) redirect("/login");
+  const userId = session.user.id;
 
   const event = await prisma.event.findUnique({
     where: { id },
@@ -70,13 +71,7 @@ export default async function EventDetailPage(props: PageProps<"/events/[id]">) 
 
   return (
     <div className="flex flex-col gap-6">
-      <Link
-        href="/events"
-        className="inline-flex w-fit items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted transition hover:text-primary"
-      >
-        <ArrowLeft size={14} />
-        All events
-      </Link>
+      <BackLink href="/events" label="All events" />
 
       <Reveal>
         <div className="relative h-72 overflow-hidden rounded-2xl border border-border sm:h-96">

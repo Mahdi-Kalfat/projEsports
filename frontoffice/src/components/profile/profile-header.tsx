@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import Image from "next/image";
-import { getRank } from "@/lib/rank";
+import { getRank, type RankOverride } from "@/lib/rank";
 import { formatCompactNumber, formatLastSeen } from "@/lib/format";
 import { getProfileTheme } from "@/lib/profile-theme";
+import { XpMeter } from "@/components/ui/xp-meter";
 
 export type ProfileHeaderData = {
   username: string;
@@ -13,16 +14,24 @@ export type ProfileHeaderData = {
   profileTheme: string;
   level: number;
   points: number;
+  ccCoins: number;
   xp: number;
   requiredXp: number;
   createdAt: Date;
   lastLoginAt: Date | null;
 };
 
-export function ProfileHeader({ profile, action }: { profile: ProfileHeaderData; action?: ReactNode }) {
-  const rank = getRank(profile.level);
+export function ProfileHeader({
+  profile,
+  action,
+  rankOverrides = [],
+}: {
+  profile: ProfileHeaderData;
+  action?: ReactNode;
+  rankOverrides?: RankOverride[];
+}) {
+  const rank = getRank(profile.level, rankOverrides);
   const theme = getProfileTheme(profile.profileTheme);
-  const xpPct = profile.requiredXp > 0 ? Math.min(100, Math.round((profile.xp / profile.requiredXp) * 100)) : 100;
 
   return (
     <div className="overflow-hidden rounded-2xl border border-border bg-surface-raised">
@@ -67,25 +76,13 @@ export function ProfileHeader({ profile, action }: { profile: ProfileHeaderData;
           </div>
 
           <div className="flex flex-col items-center gap-3 sm:items-end">
-            <div className="w-full min-w-44 rounded-xl border border-border bg-surface px-3.5 py-2">
-              <div className="flex items-center gap-2.5">
-                <Image src={rank.image} alt={rank.name} width={36} height={36} unoptimized className="object-contain" />
-                <div className="text-left">
-                  <p className="text-xs text-muted">Level</p>
-                  <p className="font-display text-lg font-bold leading-none text-foreground">{profile.level}</p>
-                </div>
-              </div>
-              <div className="mt-2">
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-canvas">
-                  <div
-                    className="h-full rounded-full bg-accent transition-all"
-                    style={{ width: `${xpPct}%` }}
-                  />
-                </div>
-                <p className="mt-1 text-right text-[11px] text-muted">
-                  {formatCompactNumber(profile.xp)} / {formatCompactNumber(profile.requiredXp)} XP
-                </p>
-              </div>
+            <div className="w-full min-w-52 rounded-xl border border-border bg-surface px-4 py-3">
+              <XpMeter
+                level={profile.level}
+                xp={profile.xp}
+                requiredXp={profile.requiredXp}
+                rankOverrides={rankOverrides}
+              />
             </div>
             {action}
           </div>
@@ -97,10 +94,14 @@ export function ProfileHeader({ profile, action }: { profile: ProfileHeaderData;
           </p>
         )}
 
-        <div className="mt-5 grid grid-cols-3 gap-3 border-t border-border pt-5 text-center sm:text-left">
+        <div className="mt-5 grid grid-cols-2 gap-3 border-t border-border pt-5 text-center sm:grid-cols-4 sm:text-left">
           <div>
             <p className="text-xs text-muted">Points</p>
             <p className="font-display text-lg font-bold text-foreground">{formatCompactNumber(profile.points)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted">CC Coins</p>
+            <p className="font-display text-lg font-bold text-foreground">{formatCompactNumber(profile.ccCoins)}</p>
           </div>
           <div>
             <p className="text-xs text-muted">Member since</p>

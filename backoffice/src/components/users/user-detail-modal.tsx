@@ -9,15 +9,18 @@ import { History, StickyNote, X } from "lucide-react";
 import {
   addNote,
   applyRestriction,
+  grantItem,
   liftRestriction,
   setRole,
   setSubRole,
   updateEconomy,
   type EconomyActionState,
+  type GrantItemState,
   type NoteActionState,
   type RestrictionActionState,
 } from "@/app/(app)/users/actions";
 import { getRank } from "@/lib/rank";
+import { describeItemEffect } from "@/lib/item-effects";
 import { RESTRICTION_LABELS, type RestrictionKind } from "@/lib/restrictions";
 
 export type UserDetail = {
@@ -30,6 +33,7 @@ export type UserDetail = {
   subRoles: string[];
   level: number;
   points: number;
+  ccCoins: number;
   xp: number;
   banned: boolean;
   bannedUntilLabel: string | null;
@@ -198,6 +202,86 @@ function EconomyForm({
 
       <SaveButton />
     </form>
+  );
+}
+
+export type ItemOption = { id: string; name: string; effectType: string; effectValue: number };
+export type GrantedItemEntry = {
+  id: string;
+  name: string;
+  effectType: string;
+  effectValue: number;
+  quantity: number;
+};
+
+function GrantItemForm({ userId, items }: { userId: string; items: ItemOption[] }) {
+  const boundAction = grantItem.bind(null, userId);
+  const [state, formAction] = useActionState<GrantItemState, FormData>(boundAction, {});
+
+  if (items.length === 0) {
+    return (
+      <p className="mt-5 border-t border-border pt-4 text-xs text-muted">
+        No active items to grant — create one on the Items page first.
+      </p>
+    );
+  }
+
+  return (
+    <form action={formAction} className="mt-5 border-t border-border pt-4">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted">Grant item</p>
+      <div className="mt-2 flex gap-3">
+        <label className="flex-2 text-xs text-muted">
+          Item
+          <select
+            name="itemId"
+            defaultValue={items[0]?.id}
+            className="mt-1 w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary"
+          >
+            {items.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name} ({describeItemEffect(item.effectType, item.effectValue)})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex-1 text-xs text-muted">
+          Quantity
+          <input
+            type="number"
+            name="quantity"
+            min={1}
+            max={99}
+            defaultValue={1}
+            className="mt-1 w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary"
+          />
+        </label>
+      </div>
+
+      {state.error && <p className="mt-2 text-xs text-primary-glow">{state.error}</p>}
+      {state.success && <p className="mt-2 text-xs text-success">Granted.</p>}
+
+      <SaveButton />
+    </form>
+  );
+}
+
+function GrantedItemsList({ entries }: { entries: GrantedItemEntry[] }) {
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="mt-4 flex flex-col gap-1.5">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted">Inventory</p>
+      <ul className="flex flex-col gap-1">
+        {entries.map((entry) => (
+          <li key={entry.id} className="flex items-center justify-between text-sm">
+            <span className="text-foreground">{entry.name}</span>
+            <span className="text-xs text-muted">
+              ×{entry.quantity} · {describeItemEffect(entry.effectType, entry.effectValue)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -477,6 +561,8 @@ export function UserDetailModal({
   notesHref,
   notesCloseHref,
   notes,
+  items,
+  grantedItems,
 }: {
   user: UserDetail;
   closeHref: string;
@@ -487,6 +573,8 @@ export function UserDetailModal({
   notesHref: string;
   notesCloseHref: string;
   notes: NoteEntry[] | null;
+  items: ItemOption[];
+  grantedItems: GrantedItemEntry[];
 }) {
   const router = useRouter();
   const isOwner = user.role === "OWNER";
@@ -521,7 +609,7 @@ export function UserDetailModal({
         className="absolute inset-0 bg-black/70"
       />
 
-      <div className="relative z-10 w-full max-w-md rounded-xl border border-border bg-surface-raised p-6 shadow-2xl">
+      <div className="relative z-10 max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl border border-border bg-surface-raised p-6 shadow-2xl">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
             <span className="flex h-11 w-11 shrink-0 items-center justify-center">
@@ -552,6 +640,7 @@ export function UserDetailModal({
           <InfoField label="Role" value={user.role} />
           <InfoField label="Sub-roles" value={user.subRoles.length ? user.subRoles.join(", ") : "—"} />
           <InfoField label="Rank" value={`${rank.name} (Level ${user.level})`} />
+          <InfoField label="CC Coins" value={`${user.ccCoins} cc`} />
           <InfoField label="Joined" value={user.joinedLabel} />
           <InfoField label="Last login" value={user.lastLoginLabel} />
         </dl>
@@ -636,6 +725,9 @@ export function UserDetailModal({
         )}
 
         {!locked && <EconomyForm userId={user.id} points={user.points} level={user.level} xp={user.xp} />}
+
+        <GrantedItemsList entries={grantedItems} />
+        {!locked && <GrantItemForm userId={user.id} items={items} />}
       </div>
 
       {promptKind && !locked && (

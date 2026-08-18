@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { motion } from "motion/react";
+import { NoArtFallback } from "@/components/ui/no-art-fallback";
 
 const STATUS_LABEL: Record<string, string> = {
   SCHEDULED: "Scheduled",
@@ -41,11 +42,14 @@ export type EventCardData = {
   backgroundImageUrl: string | null;
   logoImageUrl: string | null;
   attendingCount: number;
+  attendeePreview: { username: string; avatarUrl: string | null }[];
   startAtLabel: string;
   isAttending: boolean;
 };
 
 export function EventCard({ event }: { event: EventCardData }) {
+  const overflowCount = event.attendingCount - event.attendeePreview.length;
+
   return (
     <motion.div whileHover={{ y: -6 }} transition={{ duration: 0.25, ease: "easeOut" }} className="h-full">
       <Link
@@ -53,7 +57,7 @@ export function EventCard({ event }: { event: EventCardData }) {
         className="hover-glow group block h-full overflow-hidden rounded-2xl border border-border bg-surface-raised transition-colors hover:border-primary/50"
       >
         <div className="relative h-44 w-full overflow-hidden bg-gradient-to-br from-surface to-surface-raised">
-          {event.backgroundImageUrl && (
+          {event.backgroundImageUrl ? (
             <Image
               src={event.backgroundImageUrl}
               alt=""
@@ -61,6 +65,8 @@ export function EventCard({ event }: { event: EventCardData }) {
               unoptimized
               className="object-cover transition duration-500 group-hover:scale-110"
             />
+          ) : (
+            <NoArtFallback gameName={event.gameName} />
           )}
           <div className="absolute inset-0 bg-gradient-to-t from-surface-raised via-surface-raised/10 to-transparent" />
           <div className="absolute inset-0 bg-gradient-to-r from-black/20 via-transparent to-transparent" />
@@ -99,9 +105,31 @@ export function EventCard({ event }: { event: EventCardData }) {
           <div className="mt-3 flex items-center justify-between gap-2 border-t border-border pt-3 text-sm">
             <div>
               <p className="text-xs text-muted">Attending</p>
-              <p className="font-semibold text-foreground">
-                {event.capacity ? `${event.attendingCount}/${event.capacity}` : event.attendingCount}
-              </p>
+              {event.attendeePreview.length > 0 ? (
+                <div className="mt-1 flex items-center">
+                  {event.attendeePreview.map((attendee) => (
+                    <span
+                      key={attendee.username}
+                      className="-ml-2 flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-surface-raised bg-primary/15 font-display text-[10px] font-semibold text-primary first:ml-0"
+                    >
+                      {attendee.avatarUrl ? (
+                        <Image src={attendee.avatarUrl} alt="" width={28} height={28} unoptimized className="object-cover" />
+                      ) : (
+                        attendee.username.slice(0, 1).toUpperCase()
+                      )}
+                    </span>
+                  ))}
+                  {overflowCount > 0 && (
+                    <span className="-ml-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 border-surface-raised bg-surface text-[10px] font-semibold text-muted">
+                      +{overflowCount}
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <p className="font-semibold text-foreground">
+                  {event.capacity ? `0/${event.capacity}` : "0"}
+                </p>
+              )}
             </div>
             <div className="text-right">
               <p className="text-xs text-muted">Location</p>

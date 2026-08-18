@@ -7,7 +7,7 @@ export function getActiveBattlePass() {
   return prisma.battlePass.findFirst({
     where: { status: "ACTIVE" },
     orderBy: { startAt: "desc" },
-    include: { tiers: { orderBy: { tier: "asc" } } },
+    include: { tiers: { orderBy: { tier: "asc" }, include: { freeItem: true, premiumItem: true } } },
   });
 }
 

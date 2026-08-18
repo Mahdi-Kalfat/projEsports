@@ -36,18 +36,41 @@ function DeleteButton() {
   );
 }
 
+export type RewardItemOption = { id: string; name: string; status: string };
+
+const NON_ACTIVE_LABEL: Record<string, string> = { DRAFT: "Draft", ARCHIVED: "Archived" };
+
+const SELECT_CLASS =
+  "w-full rounded-md border border-border bg-surface-raised px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary";
+
+function RewardSelect({ name, itemId, items }: { name: string; itemId: string | null; items: RewardItemOption[] }) {
+  return (
+    <select key={itemId ?? "none"} name={name} defaultValue={itemId ?? ""} className={SELECT_CLASS}>
+      <option value="">— No reward —</option>
+      {items.map((item) => (
+        <option key={item.id} value={item.id}>
+          {item.name}
+          {item.status !== "ACTIVE" ? ` (${NON_ACTIVE_LABEL[item.status] ?? item.status})` : ""}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 const initialState: BattlePassTierActionState = {};
 
 export function BattlePassTierRow({
   battlePassId,
   tier,
-  freeReward,
-  premiumReward,
+  freeItemId,
+  premiumItemId,
+  items,
 }: {
   battlePassId: string;
   tier: number;
-  freeReward: string;
-  premiumReward: string;
+  freeItemId: string | null;
+  premiumItemId: string | null;
+  items: RewardItemOption[];
 }) {
   const boundUpsert = upsertBattlePassTier.bind(null, battlePassId, tier);
   const [state, formAction] = useActionState(boundUpsert, initialState);
@@ -61,27 +84,11 @@ export function BattlePassTierRow({
       <form action={formAction} className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-center">
         <label className="flex flex-1 items-center gap-2 text-xs text-muted">
           Free
-          <input
-            key={freeReward}
-            type="text"
-            name="freeReward"
-            maxLength={200}
-            defaultValue={freeReward}
-            placeholder="e.g. 500 Points"
-            className="w-full rounded-md border border-border bg-surface-raised px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary"
-          />
+          <RewardSelect name="freeItemId" itemId={freeItemId} items={items} />
         </label>
         <label className="flex flex-1 items-center gap-2 text-xs text-accent">
           Premium
-          <input
-            key={premiumReward}
-            type="text"
-            name="premiumReward"
-            maxLength={200}
-            defaultValue={premiumReward}
-            placeholder="e.g. Legendary Avatar Frame"
-            className="w-full rounded-md border border-border bg-surface-raised px-2.5 py-1.5 text-sm text-foreground outline-none focus:border-primary"
-          />
+          <RewardSelect name="premiumItemId" itemId={premiumItemId} items={items} />
         </label>
         <div className="flex shrink-0 items-center gap-2">
           <SaveButton />

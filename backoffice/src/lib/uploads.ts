@@ -3,7 +3,7 @@ import path from "path";
 import { randomUUID } from "crypto";
 
 const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
-const MAX_BYTES = 5 * 1024 * 1024;
+const MAX_BYTES = 10 * 1024 * 1024;
 
 const EXTENSION_BY_TYPE: Record<string, string> = {
   "image/png": "png",
@@ -24,7 +24,7 @@ export async function saveUploadedImage(file: File, subdir: string): Promise<Upl
     return { error: "Images must be PNG, JPEG, WebP, or GIF." };
   }
   if (file.size > MAX_BYTES) {
-    return { error: "Images must be under 5MB." };
+    return { error: "Images must be under 10MB." };
   }
 
   const dir = path.join(process.cwd(), "public", "uploads", subdir);

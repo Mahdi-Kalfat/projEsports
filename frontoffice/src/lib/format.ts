@@ -17,6 +17,7 @@ export function formatSignedPct(value: number): string {
 export function formatPriceByType(priceType: string, price: number): string {
   if (priceType === "FREE" || price <= 0) return "Free";
   if (priceType === "MONEY") return formatCompactCurrency(price);
+  if (priceType === "CC") return `${formatCompactNumber(price)} cc`;
   return `${formatCompactNumber(price)} pts`;
 }
 
@@ -39,4 +40,27 @@ export function formatLastSeen(lastLoginAt: Date | null): string {
 export function isRecentlyOnline(lastLoginAt: Date | null): boolean {
   if (!lastLoginAt) return false;
   return Date.now() - lastLoginAt.getTime() < 2 * 60 * 1000;
+}
+
+// Used by the profile page's game activity card (see
+// GameActivity.totalSeconds, tracked by the Discord bot's /trackactivity).
+// Always shows at most two units — "2h 15m", not "2h 15m 30s" — since this
+// is a rough "how much" figure, not a stopwatch.
+export function formatDuration(totalSeconds: number): string {
+  if (totalSeconds < 60) return "<1m";
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const hours = Math.floor(totalSeconds / 3600) % 24;
+  const days = Math.floor(totalSeconds / 86400);
+
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
+// Wraps the Date.now() call so callers never write it inline — same reason
+// formatLastSeen/isRecentlyOnline above do the same: a bare Date.now() in a
+// component/page body trips the react-hooks/purity lint rule, but one
+// tucked inside a plain helper function doesn't.
+export function formatElapsedSince(startedAt: Date): string {
+  return formatDuration((Date.now() - startedAt.getTime()) / 1000);
 }

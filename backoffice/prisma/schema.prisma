@@ -33,11 +33,37 @@ enum EntryType {
   FREE
   POINTS
   MONEY
+  // Priced in the player's own cc balance — unlike MONEY (paid out of band,
+  // needs an admin to verify), cc is a real in-system balance, so CC-priced
+  // purchases deduct it directly at buy time. See frontoffice's buyShopItem.
+  CC
 }
 
 enum ParticipationType {
   SOLO
   TEAM
+}
+
+enum TournamentRegistrationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// What an admin has triaged a ContactRequest as — drives which action panel
+// shows on the report detail page (e.g. DEPOSIT_REQUEST reveals the "Add CC
+// Coins" form). Starts GENERAL; only an admin changes it, as part of responding.
+enum ContactType {
+  GENERAL
+  DEPOSIT_REQUEST
+  ACCOUNT_ISSUE
+  BUG_REPORT
+  OTHER
+}
+
+enum ContactStatus {
+  OPEN
+  CLOSED
 }
 
 enum EventStatus {
@@ -71,6 +97,25 @@ enum ShopItemCategory {
   VOUCHER
   MERCH
   OTHER
+}
+
+enum ItemStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+// XP_BOOST/POINTS_BOOST are percentage bumps applied to the economy field of
+// the same name when a UserItem is consumed; CC_GRANT is a flat cc amount
+// instead (see frontoffice's useItem action, which exhaustively switches on
+// this). CC_GRANT items are how a shop CC-bundle purchase (see
+// ShopItem.grantsItem) pays out once its ContactRequest is approved.
+enum ItemEffectType {
+  XP_BOOST
+  POINTS_BOOST
+  CC_GRANT
+  // Flat points amount, not a percentage — mirrors CC_GRANT.
+  POINTS_GRANT
 }
 
 enum BattlePassStatus {
@@ -118,6 +163,9 @@ model User {
   shopBlocked        Boolean   @default(false)
   shopBlockedUntil   DateTime?
   points             Int       @default(0)
+  // The site's real-money-backed currency (1 cc = 1 DT) — can only ever be
+  // credited by an admin through an open ContactRequest (see addCcCoins).
+  ccCoins            Int       @default(0)
   level              Int       @default(1)
   // XP toward the *next* level — always kept < the current level's required XP
   // (see lib/level-xp.ts: normalizeLevelXp carries any overflow into level-ups
@@ -136,6 +184,13 @@ model User {
   friendCode         String?   @unique
   bannerImageUrl     String?
   inventoryPublic    Boolean   @default(true)
+  // Mirrored for the same reason as friendCode above: only discordId carries
+  // an index the front office depends on (see its User model comment and
+  // /discord-bot) — not @unique itself (MongoDB has no sparse/partial unique
+  // support in Prisma, and nearly every row lacks it). discordUsername/
+  // discordLinkedAt aren't mirrored since they have no index and back office
+  // has no use for them, same tradeoff as profileTheme.
+  discordId          String?
   lastLoginAt        DateTime?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
@@ -144,7 +199,15 @@ model User {
   eventAttendances     EventAttendee[]
   marketplaceListings  MarketplaceListing[]
   marketplacePurchases MarketplaceListing[]    @relation("MarketplacePurchases")
+  consumableItems      UserItem[]
+  wheelSpin            UserWheelSpin?
+  dailyReward          UserDailyReward?
+  submittedTournamentRegistrations TournamentRegistration[]       @relation("SubmittedTournamentRegistrations")
+  tournamentRegistrationSlots      TournamentRegistrationMember[]
+  contactRequests                  ContactRequest[]               @relation("ContactRequestOwner")
+  contactMessagesAuthored          ContactMessage[]                @relation("ContactMessageAuthor")
 
+  @@index([discordId])
   @@map("users")
 }
 
@@ -194,15 +257,36 @@ model Tournament {
   logoImageUrl       String?
   startAt            DateTime
   createdAt          DateTime          @default(now())
+  // Nullable = unlimited, same convention as Event.capacity. For SOLO this
+  // caps total registered players; TEAM tournaments have no real Team entity
+  // (see TournamentParticipant.teamName), so it caps the number of distinct
+  // team names among participants instead — see lib/tournament-capacity.ts.
+  capacity           Int?
+  // Admin-entered skill-level label for the tournament as a whole (e.g. "Gold
+  // Tier") with its own uploaded image — not derived from participants' own
+  // ranks/levels, just a badge the admin sets when creating the tournament.
+  averageRankName    String?
+  averageRankImageUrl String?
+  // Freeform admin-entered region label (e.g. "MENA", "Europe") — no fixed
+  // enum, since the set of regions isn't platform-defined anywhere else.
+  region             String?
+  // TEAM only — caps how many players (captain + added members) a single
+  // TournamentRegistration roster can have. Nullable = unlimited. Enforced at
+  // submission (front office) and re-checked at approval (see
+  // approveTournamentRegistration), same pattern as `capacity`.
+  maxTeamSize        Int?
 
-  participants TournamentParticipant[]
+  participants  TournamentParticipant[]
+  registrations TournamentRegistration[]
 
   @@map("tournaments")
 }
 
-// Recorded once the front-end registration flow (built separately) signs a
-// user up for a tournament — teamName is only meaningful when the tournament's
-// participationType is TEAM.
+// Recorded once the front-end registration flow signs a user up for a
+// tournament. For TEAM tournaments this is only ever created by
+// approveTournamentRegistration below, once a TournamentRegistration is
+// approved — teamName/teamTag/teamLogoUrl are snapshotted from that
+// registration at approval time (like AuditLog.actorUsername).
 model TournamentParticipant {
   id           String     @id @default(auto()) @map("_id") @db.ObjectId
   tournamentId String     @db.ObjectId
@@ -210,11 +294,52 @@ model TournamentParticipant {
   userId       String     @db.ObjectId
   user         User       @relation(fields: [userId], references: [id])
   teamName     String?
+  teamTag      String?
+  teamLogoUrl  String?
   joinedAt     DateTime   @default(now())
 
   @@unique([tournamentId, userId])
   @@index([tournamentId])
   @@map("tournament_participants")
+}
+
+// A team's registration *request* for one TEAM tournament, submitted from
+// the front office's "Participate" modal — reviewed here. Approving (see
+// approveTournamentRegistration in tournaments/actions.ts) creates the real
+// TournamentParticipant rows, one per member (charging each member's points
+// first if the tournament is a POINTS entry, same as the front office's
+// existing per-player joinTournament charge); rejecting creates nothing.
+model TournamentRegistration {
+  id            String                       @id @default(auto()) @map("_id") @db.ObjectId
+  tournamentId  String                       @db.ObjectId
+  tournament    Tournament                   @relation(fields: [tournamentId], references: [id])
+  teamName      String
+  teamTag       String
+  teamLogoUrl   String?
+  status        TournamentRegistrationStatus @default(PENDING)
+  submittedById String                       @db.ObjectId
+  submittedBy   User                         @relation("SubmittedTournamentRegistrations", fields: [submittedById], references: [id])
+  createdAt     DateTime                     @default(now())
+  respondedAt   DateTime?
+  // First-round bracket position (0-indexed), assigned once at approval time —
+  // see approveTournamentRegistration and lib/bracket.ts.
+  bracketSlot   Int?
+
+  members TournamentRegistrationMember[]
+
+  @@index([tournamentId, status])
+  @@map("tournament_registrations")
+}
+
+model TournamentRegistrationMember {
+  id             String                 @id @default(auto()) @map("_id") @db.ObjectId
+  registrationId String                 @db.ObjectId
+  registration   TournamentRegistration @relation(fields: [registrationId], references: [id])
+  userId         String                 @db.ObjectId
+  user           User                   @relation(fields: [userId], references: [id])
+
+  @@unique([registrationId, userId])
+  @@map("tournament_registration_members")
 }
 
 // Community events / news / maintenance windows shown alongside tournaments —
@@ -257,23 +382,98 @@ model EventAttendee {
 }
 
 // Admin-curated storefront items — priced in points or money (reuses Tournament's
-// EntryType). Purchasing/inventory is out of scope here: the front-office app that
-// will let users buy these doesn't exist yet, so there's no order/ownership model.
+// EntryType). Most categories are still display-only from this app's side (no
+// order/ownership model). Items with grantsItem set (the cc bundles) ARE
+// purchasable from the front office: buying one opens a ContactRequest instead
+// of granting anything directly — approving that ticket here (see reports'
+// approveShopPurchase) is what actually adds grantsItem to the user's inventory.
 model ShopItem {
-  id          String           @id @default(auto()) @map("_id") @db.ObjectId
-  title       String
-  description String?
-  category    ShopItemCategory @default(OTHER)
-  status      ShopItemStatus   @default(DRAFT)
-  priceType   EntryType        @default(POINTS)
-  price       Int              @default(0)
-  stock       Int?
-  gameId      String?          @db.ObjectId
-  game        Game?            @relation(fields: [gameId], references: [id])
-  imageUrl    String?
-  createdAt   DateTime         @default(now())
+  id           String           @id @default(auto()) @map("_id") @db.ObjectId
+  title        String
+  description  String?
+  category     ShopItemCategory @default(OTHER)
+  status       ShopItemStatus   @default(DRAFT)
+  priceType    EntryType        @default(POINTS)
+  price        Int              @default(0)
+  stock        Int?
+  gameId       String?          @db.ObjectId
+  game         Game?            @relation(fields: [gameId], references: [id])
+  imageUrl     String?
+  createdAt    DateTime         @default(now())
+  grantsItemId String?          @db.ObjectId
+  grantsItem   Item?            @relation("ShopItemGrant", fields: [grantsItemId], references: [id])
+  // Purchase flow for grantsItem-linked listings: true (default) opens a
+  // ContactRequest for an admin to approve, same as today; false grants the
+  // item the moment someone buys it, no review step. Irrelevant when
+  // grantsItemId is unset (nothing is purchasable yet either way).
+  needsConfirmation Boolean     @default(true)
+
+  purchaseReports ContactRequest[]
 
   @@map("shop_items")
+}
+
+// Admin-defined consumable items with a gameplay effect (e.g. "XP Boost" at
+// effectValue 25 = +25%, or "25 CC Voucher" at CC_GRANT/25) — distinct from
+// ShopItem, which is a cosmetic/storefront good with no effect of its own
+// (though a ShopItem can *grant* one of these on purchase approval — see
+// ShopItem.grantsItem). Most items still only reach a user's inventory via a
+// direct admin grant (see UserItem below and grantItem in users/actions.ts),
+// then get consumed through the front office's "Use" action, which applies
+// the effect and decrements the grant.
+model Item {
+  id          String         @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  description String?
+  status      ItemStatus     @default(DRAFT)
+  effectType  ItemEffectType @default(XP_BOOST)
+  effectValue Int            @default(0)
+  imageUrl    String?
+  createdAt   DateTime       @default(now())
+
+  grants             UserItem[]
+  freeTierRewards    BattlePassTier[] @relation("BattlePassFreeReward")
+  premiumTierRewards BattlePassTier[] @relation("BattlePassPremiumReward")
+  wheelSlot          LuckyWheelSlot?
+  dailyRewardDays    DailyRewardDay[]
+  shopItemGrants     ShopItem[]       @relation("ShopItemGrant")
+
+  @@map("items")
+}
+
+// An optional override of a single rank's name/image, managed from this
+// app's /ranks page. The rank ladder itself (which level bands map to which
+// tier index, 0-18) is a fixed constant in code (see lib/rank-tiers.ts's
+// DEFAULT_RANK_TIERS, mirrored in frontoffice's lib/rank.ts) rather than
+// living here — a row only exists once an admin actually customizes that
+// tier; frontoffice falls back to the hardcoded default (name + one of the
+// bundled /ranks/*.png images) when no row is present.
+model RankTier {
+  id       String  @id @default(auto()) @map("_id") @db.ObjectId
+  tier     Int     @unique
+  name     String?
+  imageUrl String?
+
+  @@map("rank_tiers")
+}
+
+// One admin grant of an Item to a user's inventory — quantity stacks repeat
+// grants of the same item instead of creating duplicate rows (unlike
+// UserInventoryItem's one-time ShopItem ownership, these are consumable:
+// using one via the front office's "Use" action decrements quantity, deleting
+// the row once it hits 0).
+model UserItem {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String   @db.ObjectId
+  user       User     @relation(fields: [userId], references: [id])
+  itemId     String   @db.ObjectId
+  item       Item     @relation(fields: [itemId], references: [id])
+  quantity   Int      @default(1)
+  acquiredAt DateTime @default(now())
+
+  @@unique([userId, itemId])
+  @@index([userId])
+  @@map("user_items")
 }
 
 // Admin-configured Battle Pass season — a points-gated reward ladder shown
@@ -298,22 +498,86 @@ model BattlePass {
   @@map("battle_passes")
 }
 
-// One rung of a season's reward ladder. Reward content is freeform text
-// (not linked to real ShopItem rows) — matches what the admin types, e.g.
-// "500 Points" or "Legendary Avatar Frame". Tier numbers aren't a stored
-// count; they're just how many BattlePassTier rows exist for a season,
-// added one at a time (mirrors LevelXpRule's per-tier-row pattern).
+// One rung of a season's reward ladder. Rewards are real Item rows (picked
+// from the admin's Items catalog), not freeform text — both slots are
+// optional since a newly-added tier starts with neither set (see
+// addBattlePassTier), and an admin may only want to fill in one side.
 model BattlePassTier {
   id            String     @id @default(auto()) @map("_id") @db.ObjectId
   battlePassId  String     @db.ObjectId
   battlePass    BattlePass @relation(fields: [battlePassId], references: [id])
   tier          Int
-  freeReward    String
-  premiumReward String
+  freeItemId    String?    @db.ObjectId
+  freeItem      Item?      @relation("BattlePassFreeReward", fields: [freeItemId], references: [id])
+  premiumItemId String?    @db.ObjectId
+  premiumItem   Item?      @relation("BattlePassPremiumReward", fields: [premiumItemId], references: [id])
 
   @@unique([battlePassId, tier])
   @@index([battlePassId])
   @@map("battle_pass_tiers")
+}
+
+// One slice of the Lucky Wheel — points at a real Item and carries a
+// percentage chance. Weights are stored as admin-entered percentages (1-100,
+// validated in luckyWheelSlotSchema) but spinWheel normalizes across whatever
+// total is actually configured rather than requiring them to sum to exactly
+// 100, so the wheel still works correctly even mid-edit. One slot per item
+// (@@unique) — grant a bigger share by raising that item's weight, not by
+// adding it twice.
+model LuckyWheelSlot {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  itemId    String   @unique @db.ObjectId
+  item      Item     @relation(fields: [itemId], references: [id])
+  // Float, not Int — admins need sub-1% odds (e.g. 0.1%) for rare items.
+  weight    Float    @default(1)
+  createdAt DateTime @default(now())
+
+  @@map("lucky_wheel_slots")
+}
+
+// One user's Lucky Wheel cooldown — a single row per user, overwritten on
+// each spin. Up to 4 spins per UTC calendar day, 1st free and the rest cost
+// cc (see frontoffice's spinWheel action and lib/lucky-wheel.ts); this app
+// never writes it, only the front office does.
+model UserWheelSpin {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId     String   @unique @db.ObjectId
+  user       User     @relation(fields: [userId], references: [id])
+  lastSpinAt DateTime
+  spinsToday Int      @default(0)
+
+  @@map("user_wheel_spins")
+}
+
+// One rung of the Daily Reward ladder — day is 1-indexed and admin-assigned
+// (mirrors BattlePassTier's per-tier-row pattern: a blank day is added first
+// via addDailyRewardDay, then the admin picks its item via the row's own save
+// form, so itemId starts nullable). The ladder wraps: claiming past the
+// highest configured day loops back to day 1 (see frontoffice's
+// claimDailyReward action).
+model DailyRewardDay {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  day    Int    @unique
+  itemId String? @db.ObjectId
+  item   Item?  @relation(fields: [itemId], references: [id])
+
+  @@map("daily_reward_days")
+}
+
+// A user's progress through the Daily Reward ladder. currentDay is the day
+// they'll claim next; lastClaimedAt gates re-claiming (must be a new UTC
+// calendar day) and detects a missed day — claiming on anything later than
+// the day right after lastClaimedAt resets currentDay back to 1 (see
+// frontoffice's claimDailyReward action). This app never writes it, only the
+// front office does.
+model UserDailyReward {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId        String    @unique @db.ObjectId
+  user          User      @relation(fields: [userId], references: [id])
+  currentDay    Int       @default(1)
+  lastClaimedAt DateTime?
+
+  @@map("user_daily_rewards")
 }
 
 // Player-to-player trading listings. Admin-added listings are auto-approved
@@ -382,4 +646,93 @@ model Note {
 
   @@index([targetUserId, createdAt])
   @@map("notes")
+}
+
+// A support ticket opened from the front office's "Contact an admin" flow —
+// the whole thing is a chat (see ContactMessage) rather than a single
+// message. `type` starts GENERAL and is only ever changed by an admin while
+// responding (see setReportType) — it drives which extra action panel shows
+// on the report detail page (DEPOSIT_REQUEST -> "Add CC Coins"). Status gates
+// that same action: CC can only ever be credited while status is OPEN, never
+// through a direct economy edit (see addCcCoins).
+model ContactRequest {
+  id        String        @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String        @db.ObjectId
+  user      User          @relation("ContactRequestOwner", fields: [userId], references: [id])
+  subject   String
+  type      ContactType   @default(GENERAL)
+  status    ContactStatus @default(OPEN)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  closedAt  DateTime?
+  // Set only when this ticket was auto-opened by a shop cc-bundle purchase
+  // (see frontoffice's buyShopItem) — drives the Approve/Reject purchase
+  // panel on the report detail page instead of the generic type-select +
+  // Add CC Coins panel.
+  shopItemId String?      @db.ObjectId
+  shopItem   ShopItem?    @relation(fields: [shopItemId], references: [id])
+
+  messages ContactMessage[]
+
+  @@index([status, updatedAt])
+  @@index([userId, updatedAt])
+  @@map("contact_requests")
+}
+
+// One chat message in a ContactRequest thread. isAdmin is set by which app's
+// action created it (frontoffice's sendContactMessage always false, back
+// office's replyToReport/addCcCoins always true) rather than checked from the
+// author's role.
+model ContactMessage {
+  id               String         @id @default(auto()) @map("_id") @db.ObjectId
+  contactRequestId String         @db.ObjectId
+  contactRequest   ContactRequest @relation(fields: [contactRequestId], references: [id])
+  authorId         String         @db.ObjectId
+  author           User           @relation("ContactMessageAuthor", fields: [authorId], references: [id])
+  isAdmin          Boolean        @default(false)
+  body             String
+  // Set when the message is (or includes) an attached image — e.g. a buyer's
+  // proof-of-payment screenshot replying to a MONEY-priced purchase request.
+  // body can be empty ("") when the message is image-only.
+  imageUrl         String?
+  createdAt        DateTime       @default(now())
+
+  @@index([contactRequestId, createdAt])
+  @@map("contact_messages")
+}
+
+// Admin-managed "where to send money" list (e.g. name "D17", details
+// "22688314") — frontoffice's buyShopItem lists these in the auto-generated
+// message on a MONEY-priced purchase request, so the buyer knows where to
+// pay before an admin confirms receipt and approves.
+model PaymentMethod {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  details   String
+  createdAt DateTime @default(now())
+
+  @@map("payment_methods")
+}
+
+// Admin-controlled overrides for the front office navbar's items (see
+// frontoffice's lib/nav-items.ts and this app's lib/frontoffice-nav-items.ts,
+// which must list the same keys). A key with no row here just uses its
+// static default (enabled, in array order) — rows only exist once an admin
+// actually changes something, same "override, not full source of truth"
+// pattern as RankTier.
+model NavItemConfig {
+  id      String    @id @default(auto()) @map("_id") @db.ObjectId
+  key     String    @unique
+  enabled Boolean   @default(true)
+  order   Int
+  // Small red callout on the item's label in the front office navbar — null
+  // means no badge. Admin-set from /navigation, independent of enabled/order.
+  badge   NavBadge?
+
+  @@map("nav_item_configs")
+}
+
+enum NavBadge {
+  HOT
+  NEW
 }

@@ -8,6 +8,7 @@ import { isRestrictionActive } from "@/lib/restrictions";
 import { saveUploadedImage } from "@/lib/uploads";
 import { marketplaceListingSchema } from "@/lib/validation/marketplace-listing";
 import { syncUserBadges } from "@/lib/award-badges";
+import { MARKETPLACE_MIN_LEVEL } from "@/lib/marketplace";
 
 export type SubmitListingState = { error?: string; success?: boolean };
 export type BuyListingState = { error?: string; success?: boolean };
@@ -30,6 +31,9 @@ export async function submitListing(
   const userId = session!.user.id;
 
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+  if (user.level < MARKETPLACE_MIN_LEVEL) {
+    return { error: `Reach Level ${MARKETPLACE_MIN_LEVEL} to sell on the marketplace.` };
+  }
   if (isRestrictionActive(user.marketBlocked, user.marketBlockedUntil)) {
     return { error: "Your account is currently blocked from the marketplace." };
   }
@@ -110,6 +114,9 @@ export async function buyListing(
 
   if (!listing || listing.status !== "APPROVED") return { error: "This listing is no longer available." };
   if (listing.sellerId === userId) return { error: "You can't buy your own listing." };
+  if (buyer.level < MARKETPLACE_MIN_LEVEL) {
+    return { error: `Reach Level ${MARKETPLACE_MIN_LEVEL} to buy on the marketplace.` };
+  }
   if (isRestrictionActive(buyer.marketBlocked, buyer.marketBlockedUntil)) {
     return { error: "Your account is currently blocked from the marketplace." };
   }

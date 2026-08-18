@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
+import { redirect } from "next/navigation";
 import { MessageCircle } from "lucide-react";
 import { auth } from "@/auth";
 import { getConversations } from "@/lib/messages";
@@ -9,12 +10,13 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Reveal } from "@/components/ui/reveal";
 
 export const metadata: Metadata = {
-  title: "Messages — Esports Tournament Platform",
+  title: "Messages — Clutcher",
 };
 
 export default async function MessagesPage() {
   const session = await auth();
-  const viewerId = session!.user.id;
+  if (!session?.user) redirect("/login");
+  const viewerId = session.user.id;
   const conversations = await getConversations(viewerId);
 
   return (

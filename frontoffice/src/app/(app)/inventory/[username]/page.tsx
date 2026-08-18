@@ -1,22 +1,24 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
-import { Lock, Package } from "lucide-react";
+import { notFound, redirect } from "next/navigation";
+import { Lock, Package, Sparkles } from "lucide-react";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import { getInventory, canViewInventory } from "@/lib/inventory";
+import { getInventory, getConsumableItems, canViewInventory } from "@/lib/inventory";
 import { InventoryItemCard } from "@/components/inventory/inventory-item-card";
+import { ConsumableItemCard } from "@/components/inventory/consumable-item-card";
 import { PageHeader } from "@/components/ui/page-header";
 import { Reveal } from "@/components/ui/reveal";
 
 export async function generateMetadata(props: PageProps<"/inventory/[username]">): Promise<Metadata> {
   const { username } = await props.params;
-  return { title: `${username}'s Inventory — Esports Tournament Platform` };
+  return { title: `${username}'s Inventory — Clutcher` };
 }
 
 export default async function InventoryPage(props: PageProps<"/inventory/[username]">) {
   const { username } = await props.params;
   const session = await auth();
-  const viewerId = session!.user.id;
+  if (!session?.user) redirect("/login");
+  const viewerId = session.user.id;
 
   const profile = await prisma.user.findUnique({
     where: { username },
@@ -26,7 +28,9 @@ export default async function InventoryPage(props: PageProps<"/inventory/[userna
 
   const isSelf = profile.id === viewerId;
   const canView = canViewInventory(isSelf, profile.inventoryPublic);
-  const items = canView ? await getInventory(profile.id) : [];
+  const [items, consumables] = canView
+    ? await Promise.all([getInventory(profile.id), getConsumableItems(profile.id)])
+    : [[], []];
 
   return (
     <div className="flex flex-col gap-8">
@@ -48,7 +52,7 @@ export default async function InventoryPage(props: PageProps<"/inventory/[userna
             This inventory is private.
           </div>
         </Reveal>
-      ) : items.length === 0 ? (
+      ) : items.length === 0 && consumables.length === 0 ? (
         <Reveal>
           <div className="flex min-h-[40vh] flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-surface-raised text-center text-sm text-muted">
             <Package size={28} className="text-muted/50" />
@@ -56,13 +60,41 @@ export default async function InventoryPage(props: PageProps<"/inventory/[userna
           </div>
         </Reveal>
       ) : (
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          {items.map((entry, i) => (
-            <Reveal key={entry.id} delay={Math.min(i * 0.05, 0.3)}>
-              <InventoryItemCard item={entry} />
-            </Reveal>
-          ))}
-        </div>
+        <>
+          {consumables.length > 0 && (
+            <div className="flex flex-col gap-4">
+              <h2 className="flex items-center gap-2 font-display text-sm font-semibold uppercase tracking-wide text-foreground">
+                <Sparkles size={16} className="text-primary" />
+                Boosts &amp; Consumables
+              </h2>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                {consumables.map((entry, i) => (
+                  <Reveal key={entry.id} delay={Math.min(i * 0.05, 0.3)}>
+                    <ConsumableItemCard entry={entry} canUse={isSelf} />
+                  </Reveal>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {items.length > 0 && (
+            <div className="flex flex-col gap-4">
+              {consumables.length > 0 && (
+                <h2 className="flex items-center gap-2 font-display text-sm font-semibold uppercase tracking-wide text-foreground">
+                  <Package size={16} className="text-primary" />
+                  Collectibles
+                </h2>
+              )}
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                {items.map((entry, i) => (
+                  <Reveal key={entry.id} delay={Math.min(i * 0.05, 0.3)}>
+                    <InventoryItemCard item={entry} />
+                  </Reveal>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

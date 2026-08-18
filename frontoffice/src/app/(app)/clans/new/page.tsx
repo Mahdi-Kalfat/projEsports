@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { getUserClanMembership, MIN_LEVEL_TO_CREATE_CLAN } from "@/lib/clans";
@@ -7,12 +8,13 @@ import { Reveal } from "@/components/ui/reveal";
 import { CreateClanForm } from "@/components/clans/create-clan-form";
 
 export const metadata: Metadata = {
-  title: "Create a clan — Esports Tournament Platform",
+  title: "Create a clan — Clutcher",
 };
 
 export default async function NewClanPage() {
   const session = await auth();
-  const userId = session!.user.id;
+  if (!session?.user) redirect("/login");
+  const userId = session.user.id;
 
   const [user, existingMembership] = await Promise.all([
     prisma.user.findUniqueOrThrow({ where: { id: userId } }),

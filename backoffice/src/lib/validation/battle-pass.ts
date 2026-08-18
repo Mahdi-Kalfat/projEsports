@@ -21,8 +21,16 @@ export const battlePassSchema = z
 export type BattlePassInput = z.infer<typeof battlePassSchema>;
 
 export const battlePassTierRewardSchema = z.object({
-  freeReward: z.string().trim().min(1, "Enter what's in the free tier.").max(200),
-  premiumReward: z.string().trim().min(1, "Enter what's in the premium tier.").max(200),
+  freeItemId: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v ? v : undefined)),
+  premiumItemId: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v ? v : undefined)),
 });
 
 export type BattlePassTierRewardInput = z.infer<typeof battlePassTierRewardSchema>;

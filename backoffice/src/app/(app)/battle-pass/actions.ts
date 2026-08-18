@@ -125,17 +125,24 @@ export async function upsertBattlePassTier(
   }
 
   const parsed = battlePassTierRewardSchema.safeParse({
-    freeReward: formData.get("freeReward"),
-    premiumReward: formData.get("premiumReward"),
+    freeItemId: formData.get("freeItemId"),
+    premiumItemId: formData.get("premiumItemId"),
   });
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Check the form and try again." };
   }
 
+  const [freeItem, premiumItem] = await Promise.all([
+    parsed.data.freeItemId ? prisma.item.findUnique({ where: { id: parsed.data.freeItemId } }) : null,
+    parsed.data.premiumItemId ? prisma.item.findUnique({ where: { id: parsed.data.premiumItemId } }) : null,
+  ]);
+  if (parsed.data.freeItemId && !freeItem) return { error: "Pick a valid free-tier item." };
+  if (parsed.data.premiumItemId && !premiumItem) return { error: "Pick a valid premium-tier item." };
+
   await prisma.battlePassTier.upsert({
     where: { battlePassId_tier: { battlePassId, tier } },
-    update: { freeReward: parsed.data.freeReward, premiumReward: parsed.data.premiumReward },
-    create: { battlePassId, tier, freeReward: parsed.data.freeReward, premiumReward: parsed.data.premiumReward },
+    update: { freeItemId: parsed.data.freeItemId ?? null, premiumItemId: parsed.data.premiumItemId ?? null },
+    create: { battlePassId, tier, freeItemId: parsed.data.freeItemId, premiumItemId: parsed.data.premiumItemId },
   });
 
   revalidatePath(`/battle-pass/${battlePassId}`);
@@ -151,14 +158,14 @@ export async function deleteBattlePassTier(battlePassId: string, tier: number, _
 // Separate from upsertBattlePassTier: binds straight to a plain <form
 // action> (no useActionState), so its remaining signature after binding
 // battlePassId/tier must be exactly (formData) — no prevState slot. Used by
-// the "Add tier" button, where rewards start blank and the admin fills them
-// in via the row's own save form afterward (mirrors addLevelXpTier).
+// the "Add tier" button, where rewards start unset and the admin picks items
+// via the row's own save form afterward (mirrors addLevelXpTier).
 export async function addBattlePassTier(battlePassId: string, tier: number, _formData: FormData) {
   await requireBackofficeSession();
   await prisma.battlePassTier.upsert({
     where: { battlePassId_tier: { battlePassId, tier } },
     update: {},
-    create: { battlePassId, tier, freeReward: "", premiumReward: "" },
+    create: { battlePassId, tier },
   });
   revalidatePath(`/battle-pass/${battlePassId}`);
 }

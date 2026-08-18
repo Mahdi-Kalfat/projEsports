@@ -3,9 +3,11 @@ export type Rank = {
   image: string;
 };
 
-// Every 5 levels is a rank; level N belongs to floor(N / 5) — e.g. levels 1-4 are
-// Iron 1, level 5 starts Iron 2, level 90+ is Champion (no sub-tiers past Diamond 3).
-const TIERS: Rank[] = [
+// The rank ladder's structure (level bands, tier count/order) is a fixed
+// constant, not admin-configurable — only each tier's *display* (name/image)
+// can be overridden (see RankOverride below and the back office's /ranks
+// page). Mirrored in backoffice/src/lib/rank-tiers.ts.
+export const DEFAULT_RANK_TIERS: Rank[] = [
   { name: "Iron 1", image: "/ranks/iron1.png" },
   { name: "Iron 2", image: "/ranks/iron2.png" },
   { name: "Iron 3", image: "/ranks/iron3.png" },
@@ -24,11 +26,28 @@ const TIERS: Rank[] = [
   { name: "Diamond 1", image: "/ranks/dimond1.png" },
   { name: "Diamond 2", image: "/ranks/dimond2.png" },
   { name: "Diamond 3", image: "/ranks/dimond3.png" },
+  { name: "Champion", image: "/ranks/champ.png" },
 ];
 
-const CHAMPION: Rank = { name: "Champion", image: "/ranks/champ.png" };
+const MAX_TIER = DEFAULT_RANK_TIERS.length - 1;
 
-export function getRank(level: number): Rank {
-  const index = Math.floor(Math.max(level, 1) / 5);
-  return TIERS[index] ?? CHAMPION;
+// Every 5 levels is a rank; level N belongs to floor(N / 5), clamped to the
+// last tier (Champion) once past it — e.g. levels 1-4 are Iron 1, level 5
+// starts Iron 2, level 90+ is Champion.
+export function tierForLevel(level: number): number {
+  return Math.min(Math.floor(Math.max(level, 1) / 5), MAX_TIER);
+}
+
+// A RankTier row from the DB — present only for tiers an admin has actually
+// customized (see prisma/schema.prisma's RankTier comment).
+export type RankOverride = { tier: number; name: string | null; imageUrl: string | null };
+
+export function getRank(level: number, overrides: RankOverride[] = []): Rank {
+  const tier = tierForLevel(level);
+  const fallback = DEFAULT_RANK_TIERS[tier];
+  const override = overrides.find((o) => o.tier === tier);
+  return {
+    name: override?.name || fallback.name,
+    image: override?.imageUrl || fallback.image,
+  };
 }

@@ -10,7 +10,7 @@ import { deleteShopItem, setShopItemStatus } from "@/app/(app)/shop/actions";
 import { formatPriceByType } from "@/lib/format";
 import { CATEGORY_LABEL, STATUS_LABEL } from "./shop-item-card";
 import { EditShopItemModal } from "./edit-shop-item-modal";
-import type { GameOption, ShopItemFormDefaults } from "./shop-item-form-fields";
+import type { GameOption, GrantItemOption, ShopItemFormDefaults } from "./shop-item-form-fields";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "DRAFT", label: STATUS_LABEL.DRAFT },
@@ -112,16 +112,21 @@ export type ShopItemDetail = {
   stock: number | null;
   gameId: string | null;
   gameName: string | null;
+  grantsItemId: string | null;
+  grantsItemName: string | null;
+  needsConfirmation: boolean;
   imageUrl: string | null;
 };
 
 export function ShopItemDetailModal({
   item,
   games,
+  grantItems,
   closeHref,
 }: {
   item: ShopItemDetail;
   games: GameOption[];
+  grantItems: GrantItemOption[];
   closeHref: string;
 }) {
   const router = useRouter();
@@ -149,8 +154,10 @@ export function ShopItemDetailModal({
     priceType: item.priceType,
     price: item.price,
     gameId: item.gameId ?? "",
+    grantsItemId: item.grantsItemId ?? "",
     stock: item.stock ?? "",
     description: item.description ?? "",
+    needsConfirmation: item.needsConfirmation,
   };
 
   return (
@@ -194,6 +201,10 @@ export function ShopItemDetailModal({
             value={item.stock === null ? "Unlimited" : item.stock <= 0 ? "Sold out" : `${item.stock} left`}
           />
           <InfoField label="Game" value={item.gameName ?? "All games"} />
+          <InfoField label="Grants on purchase" value={item.grantsItemName ?? "Not purchasable"} />
+          {item.grantsItemId && (
+            <InfoField label="Purchase flow" value={item.needsConfirmation ? "Needs confirmation" : "Instant grant"} />
+          )}
         </dl>
 
         {item.description && <p className="mt-3 text-sm text-muted">{item.description}</p>}
@@ -226,6 +237,7 @@ export function ShopItemDetailModal({
         <EditShopItemModal
           itemId={item.id}
           games={games}
+          grantItems={grantItems}
           defaults={editDefaults}
           currentImageUrl={item.imageUrl}
           onClose={() => setEditing(false)}

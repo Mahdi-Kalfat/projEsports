@@ -91,6 +91,21 @@ body {
   animation: float 6s ease-in-out infinite;
 }
 
+/* One-shot fall for the celebration confetti (daily reward claim, wheel win)
+   — see components/ui/confetti.tsx. Each particle sets --confetti-drift/
+   --confetti-rotate inline so one shared keyframe still gives every piece a
+   different fall path. */
+@keyframes confetti-fall {
+  0% {
+    transform: translateY(0) translateX(0) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(115vh) translateX(var(--confetti-drift)) rotate(var(--confetti-rotate));
+    opacity: 0;
+  }
+}
+
 /* Ambient grid used behind page content (AmbientBackground) — faded out toward the
    edges via mask so it reads as atmosphere, not a literal grid. */
 .bg-grid {

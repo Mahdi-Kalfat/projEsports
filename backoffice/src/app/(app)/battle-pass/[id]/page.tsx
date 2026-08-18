@@ -21,10 +21,13 @@ export async function generateMetadata(props: PageProps<"/battle-pass/[id]">): P
 export default async function BattlePassDetailPage(props: PageProps<"/battle-pass/[id]">) {
   const { id } = await props.params;
 
-  const battlePass = await prisma.battlePass.findUnique({
-    where: { id },
-    include: { tiers: { orderBy: { tier: "asc" } } },
-  });
+  const [battlePass, items] = await Promise.all([
+    prisma.battlePass.findUnique({
+      where: { id },
+      include: { tiers: { orderBy: { tier: "asc" } } },
+    }),
+    prisma.item.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, status: true } }),
+  ]);
   if (!battlePass) notFound();
 
   const nextTier = battlePass.tiers.length > 0 ? battlePass.tiers[battlePass.tiers.length - 1].tier + 1 : 1;
@@ -65,8 +68,9 @@ export default async function BattlePassDetailPage(props: PageProps<"/battle-pas
                 key={tier.tier}
                 battlePassId={battlePass.id}
                 tier={tier.tier}
-                freeReward={tier.freeReward}
-                premiumReward={tier.premiumReward}
+                freeItemId={tier.freeItemId}
+                premiumItemId={tier.premiumItemId}
+                items={items}
               />
             ))}
           </div>

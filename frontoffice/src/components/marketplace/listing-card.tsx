@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { motion } from "motion/react";
 import { formatPriceByType } from "@/lib/format";
+import { NoArtFallback } from "@/components/ui/no-art-fallback";
 
 const CATEGORY_LABEL: Record<string, string> = {
   ACCOUNT: "Account",
@@ -57,7 +58,7 @@ export function ListingCard({
       className="hover-glow group h-full overflow-hidden rounded-2xl border border-border bg-surface-raised transition-colors hover:border-accent/50"
     >
       <div className="relative h-44 w-full overflow-hidden bg-gradient-to-br from-surface to-surface-raised">
-        {listing.imageUrl && (
+        {listing.imageUrl ? (
           <Image
             src={listing.imageUrl}
             alt=""
@@ -65,6 +66,8 @@ export function ListingCard({
             unoptimized
             className="object-cover transition duration-500 group-hover:scale-110"
           />
+        ) : (
+          <NoArtFallback gameName={listing.gameName} />
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-surface-raised via-surface-raised/10 to-transparent" />
         <span className="absolute left-3 top-3 rounded-full bg-accent/15 px-2.5 py-1 text-xs font-medium text-accent ring-1 ring-accent/30 backdrop-blur-sm">

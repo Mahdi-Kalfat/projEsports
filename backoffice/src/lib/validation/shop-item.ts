@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const SHOP_ITEM_CATEGORIES = ["AVATAR", "BADGE", "BOOST", "VOUCHER", "MERCH", "OTHER"] as const;
 
-export const SHOP_ITEM_PRICE_TYPES = ["FREE", "POINTS", "MONEY"] as const;
+export const SHOP_ITEM_PRICE_TYPES = ["FREE", "POINTS", "MONEY", "CC"] as const;
 
 export const shopItemSchema = z.object({
   title: z.string().trim().min(1, "Title is required").max(120),

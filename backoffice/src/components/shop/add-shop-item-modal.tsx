@@ -4,7 +4,7 @@ import { useActionState, useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { Plus, X } from "lucide-react";
 import { createShopItem, type CreateShopItemState } from "@/app/(app)/shop/actions";
-import { ShopItemFormFields, type GameOption } from "./shop-item-form-fields";
+import { ShopItemFormFields, type GameOption, type GrantItemOption } from "./shop-item-form-fields";
 
 function SubmitButton() {
   const { pending } = useFormStatus();
@@ -21,7 +21,7 @@ function SubmitButton() {
 
 const initialState: CreateShopItemState = {};
 
-export function AddShopItemModal({ games }: { games: GameOption[] }) {
+export function AddShopItemModal({ games, grantItems }: { games: GameOption[]; grantItems: GrantItemOption[] }) {
   const [open, setOpen] = useState(false);
   const [handledSuccess, setHandledSuccess] = useState(false);
   const [state, formAction] = useActionState(createShopItem, initialState);
@@ -77,7 +77,7 @@ export function AddShopItemModal({ games }: { games: GameOption[] }) {
             </div>
 
             <div className="mt-4">
-              <ShopItemFormFields games={games} />
+              <ShopItemFormFields games={games} grantItems={grantItems} />
             </div>
 
             {state.error && <p className="mt-3 text-xs text-primary-glow">{state.error}</p>}

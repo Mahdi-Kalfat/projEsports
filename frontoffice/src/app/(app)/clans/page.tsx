@@ -1,16 +1,21 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Plus, Shield } from "lucide-react";
+import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { ClanCard } from "@/components/clans/clan-card";
 import { PageHeader } from "@/components/ui/page-header";
 import { Reveal } from "@/components/ui/reveal";
 
 export const metadata: Metadata = {
-  title: "Clans — Esports Tournament Platform",
+  title: "Clans — Clutcher",
 };
 
 export default async function ClansPage() {
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
   const clans = await prisma.clan.findMany({
     orderBy: { createdAt: "desc" },
     include: { _count: { select: { members: true } } },

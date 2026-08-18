@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { getFriends } from "@/lib/friends";
@@ -9,12 +10,13 @@ import { IncomingRequests, OutgoingRequests } from "@/components/friends/pending
 import { AddFriendForm } from "@/components/friends/add-friend-form";
 
 export const metadata: Metadata = {
-  title: "Friends — Esports Tournament Platform",
+  title: "Friends — Clutcher",
 };
 
 export default async function FriendsPage() {
   const session = await auth();
-  const userId = session!.user.id;
+  if (!session?.user) redirect("/login");
+  const userId = session.user.id;
 
   const [me, friends, incoming, outgoing] = await Promise.all([
     prisma.user.findUnique({ where: { id: userId }, select: { friendCode: true } }),

@@ -6,5 +6,6 @@ import { auth } from "@/auth";
 // /inventory/[username], mirroring "/profile"'s redirect to /profile/[username].
 export default async function InventoryRedirectPage() {
   const session = await auth();
-  redirect(`/inventory/${session!.user.username}`);
+  if (!session?.user) redirect("/login");
+  redirect(`/inventory/${session.user.username}`);
 }

@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { notFound, redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { getClanRelation } from "@/lib/clans";
@@ -11,6 +9,7 @@ import { ClanSettingsButton } from "@/components/clans/clan-settings-button";
 import { MemberList } from "@/components/clans/member-list";
 import { JoinRequestsPanel } from "@/components/clans/join-requests-panel";
 import { Reveal } from "@/components/ui/reveal";
+import { BackLink } from "@/components/ui/back-link";
 
 export async function generateMetadata(props: PageProps<"/clans/[id]">): Promise<Metadata> {
   const { id } = await props.params;
@@ -23,7 +22,8 @@ const MEMBER_SELECT = { id: true, username: true, avatarUrl: true, level: true }
 export default async function ClanDetailPage(props: PageProps<"/clans/[id]">) {
   const { id } = await props.params;
   const session = await auth();
-  const viewerId = session!.user.id;
+  if (!session?.user) redirect("/login");
+  const viewerId = session.user.id;
 
   const clan = await prisma.clan.findUnique({
     where: { id },
@@ -55,13 +55,7 @@ export default async function ClanDetailPage(props: PageProps<"/clans/[id]">) {
 
   return (
     <div className="flex flex-col gap-6">
-      <Link
-        href="/clans"
-        className="inline-flex w-fit items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted transition hover:text-primary"
-      >
-        <ArrowLeft size={14} />
-        All clans
-      </Link>
+      <BackLink href="/clans" label="All clans" />
 
       <Reveal>
         <ClanHeader

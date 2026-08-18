@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { getFriendshipStatus } from "@/lib/friends";
 import { findConversation, getMessages } from "@/lib/messages";
 import { MessageThread } from "@/components/messages/message-thread";
+import { BackLink } from "@/components/ui/back-link";
 
 export async function generateMetadata(props: PageProps<"/messages/[username]">): Promise<Metadata> {
   const { username } = await props.params;
@@ -16,7 +16,8 @@ export async function generateMetadata(props: PageProps<"/messages/[username]">)
 export default async function MessageThreadPage(props: PageProps<"/messages/[username]">) {
   const { username } = await props.params;
   const session = await auth();
-  const viewerId = session!.user.id;
+  if (!session?.user) redirect("/login");
+  const viewerId = session.user.id;
 
   const friend = await prisma.user.findUnique({
     where: { username },
@@ -54,9 +55,7 @@ export default async function MessageThreadPage(props: PageProps<"/messages/[use
 
   return (
     <div className="flex flex-col gap-4">
-      <Link href="/messages" className="inline-flex w-fit items-center gap-1.5 text-xs font-medium text-muted hover:text-foreground">
-        <ArrowLeft size={14} /> All conversations
-      </Link>
+      <BackLink href="/messages" label="All conversations" />
       <MessageThread
         conversationId={conversation?.id ?? null}
         friend={friend}

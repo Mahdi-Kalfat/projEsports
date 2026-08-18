@@ -7,5 +7,6 @@ import { auth } from "@/auth";
 // viewing your own profile and anyone else's.
 export default async function ProfileRedirectPage() {
   const session = await auth();
-  redirect(`/profile/${session!.user.username}`);
+  if (!session?.user) redirect("/login");
+  redirect(`/profile/${session.user.username}`);
 }

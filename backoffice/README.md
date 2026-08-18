@@ -1,6 +1,6 @@
 # Back Office
 
-Admin back office for the Esports Tournament Platform. Next.js 16 (App Router) +
+Admin back office for Clutcher. Next.js 16 (App Router) +
 TypeScript, Prisma/MongoDB, Auth.js (NextAuth v5) credentials login.
 
 There is no self-service sign-up here — accounts are provisioned directly in the

@@ -14,7 +14,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Back Office — Esports Tournament Platform",
+  title: "Back Office — Clutcher",
   description: "Admin back office login",
 };
 

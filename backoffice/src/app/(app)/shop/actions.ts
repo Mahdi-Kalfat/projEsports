@@ -34,6 +34,13 @@ async function resolveGameId(raw: FormDataEntryValue | null) {
   return { value: raw };
 }
 
+async function resolveGrantsItemId(raw: FormDataEntryValue | null) {
+  if (typeof raw !== "string" || raw.trim() === "") return { value: null as string | null };
+  const item = await prisma.item.findUnique({ where: { id: raw } });
+  if (!item) return { error: "Pick a valid item to grant." };
+  return { value: raw };
+}
+
 export async function createShopItem(
   _prevState: CreateShopItemState,
   formData: FormData,
@@ -47,6 +54,9 @@ export async function createShopItem(
 
   const game = await resolveGameId(formData.get("gameId"));
   if ("error" in game) return { error: game.error };
+
+  const grantsItem = await resolveGrantsItemId(formData.get("grantsItemId"));
+  if ("error" in grantsItem) return { error: grantsItem.error };
 
   const stock = parseOptionalStock(formData.get("stock"));
   if ("error" in stock) return { error: stock.error };
@@ -67,6 +77,8 @@ export async function createShopItem(
       price: parsed.data.price,
       description: parsed.data.description,
       gameId: game.value,
+      grantsItemId: grantsItem.value,
+      needsConfirmation: formData.get("needsConfirmation") === "on",
       stock: stock.value,
       imageUrl,
     },
@@ -94,6 +106,9 @@ export async function updateShopItem(
   const game = await resolveGameId(formData.get("gameId"));
   if ("error" in game) return { error: game.error };
 
+  const grantsItem = await resolveGrantsItemId(formData.get("grantsItemId"));
+  if ("error" in grantsItem) return { error: grantsItem.error };
+
   const stock = parseOptionalStock(formData.get("stock"));
   if ("error" in stock) return { error: stock.error };
 
@@ -114,6 +129,8 @@ export async function updateShopItem(
       price: parsed.data.price,
       description: parsed.data.description ?? null,
       gameId: game.value ?? null,
+      grantsItemId: grantsItem.value,
+      needsConfirmation: formData.get("needsConfirmation") === "on",
       stock: stock.value ?? null,
       imageUrl,
     },

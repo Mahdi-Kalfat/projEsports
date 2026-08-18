@@ -1,13 +1,20 @@
 import type { Metadata } from "next";
 import Image from "next/image";
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Users } from "lucide-react";
+import { Users, Trophy } from "lucide-react";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { formatCompactCurrency, formatPriceByType } from "@/lib/format";
+import { registeredCount, isTournamentFull, formatCapacityLabel } from "@/lib/tournament-capacity";
 import { Reveal } from "@/components/ui/reveal";
 import { JoinForm } from "@/components/tournaments/join-form";
+import { TeamRegistrationButton } from "@/components/tournaments/team-registration-button";
+import { TeamRosterButton } from "@/components/tournaments/team-roster-button";
+import { ExpandableDescription } from "@/components/tournaments/expandable-description";
+import { TournamentBracket } from "@/components/tournaments/tournament-bracket";
+import { NoArtFallback } from "@/components/ui/no-art-fallback";
+import { BackLink } from "@/components/ui/back-link";
+import { SignInToContinueButton } from "@/components/ui/sign-in-button";
 
 export async function generateMetadata(props: PageProps<"/tournaments/[id]">): Promise<Metadata> {
   const { id } = await props.params;
@@ -50,41 +57,84 @@ function InfoField({ label, value, big }: { label: string; value: string; big?: 
 export default async function TournamentDetailPage(props: PageProps<"/tournaments/[id]">) {
   const { id } = await props.params;
   const session = await auth();
-  const userId = session!.user.id;
+  const userId = session?.user?.id;
 
-  const tournament = await prisma.tournament.findUnique({
-    where: { id },
-    include: {
-      game: true,
-      participants: {
-        include: { user: { select: { username: true } } },
-        orderBy: { joinedAt: "asc" },
+  const [tournament, myRegistrations, approvedRegistrations] = await Promise.all([
+    prisma.tournament.findUnique({
+      where: { id },
+      include: {
+        game: true,
+        participants: {
+          include: { user: { select: { username: true, avatarUrl: true } } },
+          orderBy: { joinedAt: "asc" },
+        },
       },
-    },
-  });
+    }),
+    userId
+      ? prisma.tournamentRegistration.findMany({
+          where: { tournamentId: id, members: { some: { userId } } },
+          orderBy: { createdAt: "desc" },
+        })
+      : Promise.resolve([]),
+    prisma.tournamentRegistration.findMany({
+      where: { tournamentId: id, status: "APPROVED" },
+      select: { id: true, teamName: true, teamTag: true, teamLogoUrl: true, bracketSlot: true },
+    }),
+  ]);
 
   if (!tournament || tournament.status === "DRAFT") notFound();
 
   const myEntry = tournament.participants.find((p) => p.userId === userId);
   const isJoined = !!myEntry;
-  const canJoin = tournament.status === "REGISTRATION" && tournament.entryType !== "MONEY";
+  const pendingRegistration = myRegistrations.find((r) => r.status === "PENDING");
+  const lastRejectedRegistration = !pendingRegistration
+    ? myRegistrations.find((r) => r.status === "REJECTED")
+    : undefined;
+
+  const full = isTournamentFull(tournament.participationType, tournament.participants, tournament.capacity);
+  const canJoin =
+    tournament.status === "REGISTRATION" && tournament.entryType !== "MONEY" && !full && !pendingRegistration;
+
+  const registered = registeredCount(tournament.participationType, tournament.participants);
+
+  // TEAM tournaments create one TournamentParticipant row per roster member
+  // (see joinTournament/approveTournamentRegistration) — group them back into
+  // one entry per team for display, instead of repeating the same team name
+  // once per player.
+  const isTeamTournament = tournament.participationType === "TEAM";
+  const teamGroups = isTeamTournament
+    ? Array.from(
+        tournament.participants
+          .reduce((map, p) => {
+            const key = p.teamTag ?? p.teamName ?? p.id;
+            const existing = map.get(key);
+            const member = { id: p.id, username: p.user.username, avatarUrl: p.user.avatarUrl };
+            if (existing) {
+              existing.members.push(member);
+            } else {
+              map.set(key, {
+                tag: p.teamTag ?? "—",
+                name: p.teamName ?? "Unnamed team",
+                logoUrl: p.teamLogoUrl,
+                members: [member],
+              });
+            }
+            return map;
+          }, new Map<string, { tag: string; name: string; logoUrl: string | null; members: { id: string; username: string; avatarUrl: string | null }[] }>())
+          .entries(),
+      )
+    : [];
 
   return (
     <div className="flex flex-col gap-6">
-      <Link
-        href="/tournaments"
-        className="inline-flex w-fit items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted transition hover:text-primary"
-      >
-        <ArrowLeft size={14} />
-        All tournaments
-      </Link>
+      <BackLink href="/tournaments" label="All tournaments" />
 
       <Reveal>
         <div className="relative h-72 overflow-hidden rounded-2xl border border-border sm:h-96">
           {tournament.backgroundImageUrl ? (
             <Image src={tournament.backgroundImageUrl} alt="" fill unoptimized priority className="object-cover" />
           ) : (
-            <div className="absolute inset-0 bg-gradient-to-br from-surface to-surface-raised" />
+            <NoArtFallback gameName={tournament.game.name} />
           )}
           <div className="absolute inset-0 bg-gradient-to-t from-canvas via-canvas/40 to-transparent" />
           <div className="absolute inset-0 bg-gradient-to-r from-black/40 via-transparent to-transparent" />
@@ -122,9 +172,14 @@ export default async function TournamentDetailPage(props: PageProps<"/tournament
             <InfoField label="Entry" value={formatPriceByType(tournament.entryType, tournament.entryCost)} big />
             <InfoField label="Format" value={tournament.participationType === "TEAM" ? "Teams" : "Solo"} />
             <InfoField label="Starts" value={formatDateTime(tournament.startAt)} />
+            <InfoField
+              label="Registered"
+              value={formatCapacityLabel(tournament.participationType, registered, tournament.capacity)}
+            />
+            {tournament.region && <InfoField label="Region" value={tournament.region} />}
           </dl>
 
-          {tournament.description && <p className="mt-5 text-sm text-muted">{tournament.description}</p>}
+          {tournament.description && <ExpandableDescription text={tournament.description} />}
           {tournament.additionalInfo && (
             <div className="mt-4 rounded-md border border-border bg-surface px-3 py-2.5">
               <p className="text-xs font-medium uppercase tracking-wide text-muted">Additional information</p>
@@ -137,8 +192,35 @@ export default async function TournamentDetailPage(props: PageProps<"/tournament
               <div className="rounded-md bg-success/15 px-3 py-2.5 text-center text-sm font-medium text-success">
                 You&apos;re registered{myEntry?.teamName ? ` as "${myEntry.teamName}"` : ""}. Good luck!
               </div>
+            ) : pendingRegistration ? (
+              <div className="rounded-md bg-warning/15 px-3 py-2.5 text-center text-sm font-medium text-warning">
+                &ldquo;{pendingRegistration.teamName}&rdquo; [{pendingRegistration.teamTag}] is pending admin
+                approval.
+              </div>
             ) : canJoin ? (
-              <JoinForm tournamentId={tournament.id} requiresTeamName={tournament.participationType === "TEAM"} />
+              <div className="flex flex-col gap-2">
+                {!userId ? (
+                  <SignInToContinueButton label="Sign in to register" className="w-full" />
+                ) : (
+                  <>
+                    {lastRejectedRegistration && (
+                      <p className="text-center text-xs text-muted">
+                        Your previous registration (&ldquo;{lastRejectedRegistration.teamName}&rdquo;) was declined —
+                        you can submit a new one below.
+                      </p>
+                    )}
+                    {tournament.participationType === "TEAM" ? (
+                      <TeamRegistrationButton tournamentId={tournament.id} maxTeamSize={tournament.maxTeamSize} />
+                    ) : (
+                      <JoinForm tournamentId={tournament.id} requiresTeamName={false} />
+                    )}
+                  </>
+                )}
+              </div>
+            ) : full ? (
+              <p className="rounded-md bg-warning/10 px-3 py-2.5 text-center text-sm text-warning">
+                This tournament is full.
+              </p>
             ) : tournament.entryType === "MONEY" ? (
               <p className="rounded-md bg-warning/10 px-3 py-2.5 text-center text-sm text-warning">
                 This tournament requires a money entry fee — contact an admin to register.
@@ -152,14 +234,52 @@ export default async function TournamentDetailPage(props: PageProps<"/tournament
         </div>
       </Reveal>
 
+      {isTeamTournament && (approvedRegistrations.length > 0 || tournament.capacity !== null) && (
+        <Reveal delay={0.125}>
+          <div className="mx-auto w-full max-w-6xl rounded-2xl border border-border bg-surface-raised p-6">
+            <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted">
+              <Trophy size={14} />
+              Bracket
+            </div>
+            <div className="mt-4">
+              <TournamentBracket registrations={approvedRegistrations} capacity={tournament.capacity} />
+            </div>
+          </div>
+        </Reveal>
+      )}
+
       <Reveal delay={0.15}>
         <div className="mx-auto w-full max-w-3xl rounded-2xl border border-border bg-surface-raised p-6">
-          <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted">
-            <Users size={14} />
-            Participants ({tournament.participants.length})
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted">
+              <Users size={14} />
+              {isTeamTournament ? `Teams (${registered})` : `Participants (${tournament.participants.length})`}
+            </div>
+            {tournament.averageRankName && (
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-muted">Average rank</p>
+                {tournament.averageRankImageUrl && (
+                  <Image
+                    src={tournament.averageRankImageUrl}
+                    alt={tournament.averageRankName}
+                    width={24}
+                    height={24}
+                    unoptimized
+                    className="object-contain"
+                  />
+                )}
+                <p className="text-xs font-semibold text-foreground">{tournament.averageRankName}</p>
+              </div>
+            )}
           </div>
           {tournament.participants.length === 0 ? (
             <p className="mt-3 text-sm text-muted">No one has registered yet — be the first.</p>
+          ) : isTeamTournament ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {teamGroups.map(([key, team]) => (
+                <TeamRosterButton key={key} team={team} />
+              ))}
+            </div>
           ) : (
             <ul className="mt-3 flex flex-wrap gap-2">
               {tournament.participants.map((p) => (
@@ -167,7 +287,7 @@ export default async function TournamentDetailPage(props: PageProps<"/tournament
                   key={p.id}
                   className="rounded-full border border-border px-3 py-1 text-xs text-foreground"
                 >
-                  {p.teamName ?? p.user.username}
+                  {p.user.username}
                 </li>
               ))}
             </ul>

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { Trophy, CalendarDays, MessageSquareText } from "lucide-react";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
@@ -10,6 +10,8 @@ import { FriendAction } from "@/components/profile/friend-action";
 import { FriendsPreview } from "@/components/profile/friends-preview";
 import { InventoryPreview } from "@/components/profile/inventory-preview";
 import { EditProfileButton } from "@/components/profile/edit-profile-button";
+import { DiscordLinkCard } from "@/components/profile/discord-link-card";
+import { GameActivityCard } from "@/components/profile/game-activity-card";
 import { ClanWidget } from "@/components/profile/clan-widget";
 import { HistoryList, type HistoryEntry } from "@/components/profile/history-list";
 import { BadgesShowcase } from "@/components/profile/badges-showcase";
@@ -20,10 +22,11 @@ import type { PostData } from "@/components/posts/types";
 import { Reveal } from "@/components/ui/reveal";
 import { syncUserBadges, getBadgeBoard } from "@/lib/award-badges";
 import { getRequiredXp } from "@/lib/level-xp";
+import { formatElapsedSince } from "@/lib/format";
 
 export async function generateMetadata(props: PageProps<"/profile/[username]">): Promise<Metadata> {
   const { username } = await props.params;
-  return { title: `${username} — Esports Tournament Platform` };
+  return { title: `${username} — Clutcher` };
 }
 
 function formatDate(date: Date) {
@@ -35,21 +38,21 @@ const AUTHOR_SELECT = { id: true, username: true, avatarUrl: true } as const;
 export default async function ProfilePage(props: PageProps<"/profile/[username]">) {
   const { username } = await props.params;
   const session = await auth();
-  const viewerId = session!.user.id;
+  if (!session?.user) redirect("/login");
+  const viewerId = session.user.id;
 
+  // participations/eventAttendances are fetched without a nested include on
+  // tournament/event: both are required relations in the schema, but Mongo
+  // has no real FK enforcement, so a row can still end up pointing at a
+  // tournament/event that's since been deleted outside the app's own cascade
+  // — Prisma throws instead of returning null for a missing required
+  // relation. Fetching the targets separately and joining in JS (dropping
+  // anything that no longer resolves) keeps this page rendering regardless.
   const profile = await prisma.user.findUnique({
     where: { username },
     include: {
-      participations: {
-        include: { tournament: { include: { game: true } } },
-        orderBy: { joinedAt: "desc" },
-        take: 10,
-      },
-      eventAttendances: {
-        include: { event: { include: { game: true } } },
-        orderBy: { joinedAt: "desc" },
-        take: 10,
-      },
+      participations: { orderBy: { joinedAt: "desc" }, take: 10 },
+      eventAttendances: { orderBy: { joinedAt: "desc" }, take: 10 },
     },
   });
 
@@ -64,7 +67,7 @@ export default async function ProfilePage(props: PageProps<"/profile/[username]"
   // as earned in the same render, not one visit later.
   if (isSelf) await syncUserBadges(profile.id);
 
-  const [friendshipStatus, friends, inventoryItems, clanMembership, rawPosts, badges, viewerRepostRows, wallComments, levelXpRules] =
+  const [friendshipStatus, friends, inventoryItems, clanMembership, rawPosts, badges, viewerRepostRows, wallComments, levelXpRules, rankOverrides, tournaments, events, gameActivity] =
     await Promise.all([
       isSelf ? Promise.resolve<FriendshipStatus>({ kind: "SELF" }) : getFriendshipStatus(viewerId, profile.id),
       getFriends(profile.id),
@@ -103,10 +106,28 @@ export default async function ProfilePage(props: PageProps<"/profile/[username]"
         include: { author: { select: AUTHOR_SELECT } },
       }),
       prisma.levelXpRule.findMany({ select: { tier: true, xpPerLevel: true } }),
+      prisma.rankTier.findMany(),
+      prisma.tournament.findMany({
+        where: { id: { in: profile.participations.map((p) => p.tournamentId) } },
+        include: { game: true },
+      }),
+      prisma.event.findMany({
+        where: { id: { in: profile.eventAttendances.map((a) => a.eventId) } },
+        include: { game: true },
+      }),
+      prisma.gameActivity.findMany({
+        where: { userId: profile.id },
+        orderBy: { totalSeconds: "desc" },
+        take: 5,
+        select: { gameName: true, totalSeconds: true },
+      }),
     ]);
 
   const viewerRepostedIds = new Set(viewerRepostRows.map((r) => r.repostOfId));
   const requiredXp = getRequiredXp(profile.level, levelXpRules);
+  const currentGameElapsedLabel = profile.currentGameStartedAt
+    ? formatElapsedSince(profile.currentGameStartedAt)
+    : null;
 
   const posts: PostData[] = rawPosts.map((post) => {
     const targetId = post.repostOfId ?? post.id;
@@ -129,21 +150,36 @@ export default async function ProfilePage(props: PageProps<"/profile/[username]"
     };
   });
 
-  const tournamentEntries: HistoryEntry[] = profile.participations.map((p) => ({
-    id: p.id,
-    title: p.tournament.title,
-    subtitle: p.tournament.game.name,
-    dateLabel: formatDate(p.tournament.startAt),
-    href: `/tournaments/${p.tournament.id}`,
-  }));
+  const tournamentsById = new Map(tournaments.map((t) => [t.id, t]));
+  const eventsById = new Map(events.map((e) => [e.id, e]));
 
-  const eventEntries: HistoryEntry[] = profile.eventAttendances.map((a) => ({
-    id: a.id,
-    title: a.event.title,
-    subtitle: a.event.game?.name ?? "All games",
-    dateLabel: formatDate(a.event.startAt),
-    href: `/events/${a.event.id}`,
-  }));
+  const tournamentEntries: HistoryEntry[] = profile.participations
+    .map((p) => {
+      const tournament = tournamentsById.get(p.tournamentId);
+      if (!tournament) return null;
+      return {
+        id: p.id,
+        title: tournament.title,
+        subtitle: tournament.game.name,
+        dateLabel: formatDate(tournament.startAt),
+        href: `/tournaments/${tournament.id}`,
+      };
+    })
+    .filter((entry): entry is HistoryEntry => entry !== null);
+
+  const eventEntries: HistoryEntry[] = profile.eventAttendances
+    .map((a) => {
+      const event = eventsById.get(a.eventId);
+      if (!event) return null;
+      return {
+        id: a.id,
+        title: event.title,
+        subtitle: event.game?.name ?? "All games",
+        dateLabel: formatDate(event.startAt),
+        href: `/events/${event.id}`,
+      };
+    })
+    .filter((entry): entry is HistoryEntry => entry !== null);
 
   return (
     <div className="flex flex-col gap-6">
@@ -158,11 +194,13 @@ export default async function ProfilePage(props: PageProps<"/profile/[username]"
             profileTheme: profile.profileTheme,
             level: profile.level,
             points: profile.points,
+            ccCoins: profile.ccCoins,
             xp: profile.xp,
             requiredXp,
             createdAt: profile.createdAt,
             lastLoginAt: profile.lastLoginAt,
           }}
+          rankOverrides={rankOverrides}
           action={
             isSelf ? (
               <EditProfileButton
@@ -234,10 +272,29 @@ export default async function ProfilePage(props: PageProps<"/profile/[username]"
           </Reveal>
 
           <Reveal delay={0.1}>
+            <DiscordLinkCard
+              isSelf={isSelf}
+              discordUsername={profile.discordUsername}
+              discordGlobalName={profile.discordGlobalName}
+              discordAvatarUrl={profile.discordAvatarUrl}
+            />
+          </Reveal>
+
+          <Reveal delay={0.1}>
+            <GameActivityCard
+              isSelf={isSelf}
+              currentGame={profile.currentGame}
+              currentGameElapsedLabel={currentGameElapsedLabel}
+              games={gameActivity}
+            />
+          </Reveal>
+
+          <Reveal delay={0.1}>
             <FriendsPreview
               friends={friends.slice(0, 8)}
               total={friends.length}
               viewAllHref={isSelf ? "/friends" : undefined}
+              rankOverrides={rankOverrides}
             />
           </Reveal>
 
